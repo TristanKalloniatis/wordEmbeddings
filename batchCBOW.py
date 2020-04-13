@@ -8,16 +8,17 @@ from torch.utils.data import DataLoader, TensorDataset
 from datetime import datetime
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
+import pickle
 
 CONTEXT_SIZE = 5
 EMBEDDING_DIM = 16
 MIN_WORD_COUNT = 10
 TRAIN_PROPORTION = 0.75
 VALID_PROPORTION = 0.15
-LEARNING_RATE = 0.5
+LEARNING_RATE = 1
 MOMENTUM = 0.9
 BATCH_SIZE = 100
-EPOCHS = 25
+EPOCHS = 20
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
 
@@ -65,15 +66,16 @@ def buildVocab(rawData):
             allowableVocab.append(word)
         else:
             rareWordsExist = True
-    vocabularySize = len(allowableVocab)
     wordMapping = {word: i for i, word in enumerate(allowableVocab)}
     reverseWordMapping = {i: word for word, i in wordMapping.items()}
-    reverseWordMapping[len(allowableVocab)] = '???'
+    if rareWordsExist:
+        reverseWordMapping[len(allowableVocab)] = '???'
     for word in wordCounts:
         if wordCounts[word] < MIN_WORD_COUNT:
             wordMapping[word] = len(allowableVocab)
     if rareWordsExist:
-        vocabularySize += 1
+        allowableVocab.append('???')
+    vocabularySize = len(allowableVocab)
     print("Vocabulary size:", vocabularySize)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize
 
@@ -91,7 +93,8 @@ def preProcessWords(words, wordMapping):
 def splitData(rawData):
     return rawData[: int(len(rawData) * TRAIN_PROPORTION)], rawData[int(len(rawData) * TRAIN_PROPORTION): int(
         len(rawData) * (TRAIN_PROPORTION + VALID_PROPORTION))], rawData[
-                                                                int(len(rawData) * (TRAIN_PROPORTION + VALID_PROPORTION)):]
+                                                                int(len(rawData) * (
+                                                                        TRAIN_PROPORTION + VALID_PROPORTION)):]
 
 
 def buildDataLoader(rawData, wordMapping, batchSize=None, shuffle=False):
@@ -112,16 +115,17 @@ def buildDataLoader(rawData, wordMapping, batchSize=None, shuffle=False):
     return dl
 
 
-data = getData('Downloads/reviews_Musical_Instruments_5.json.gz')
-wordIndex, reverseWordIndex, vocab, VOCAB_SIZE = buildVocab(data)
-trainData, validData, testData = splitData(data)
-
-print("Train data")
-trainDl = buildDataLoader(trainData, wordIndex, batchSize=BATCH_SIZE, shuffle=True)
-print("Validation data")
-validDl = buildDataLoader(validData, wordIndex, batchSize=2 * BATCH_SIZE)
-print("Test data")
-testDl = buildDataLoader(testData, wordIndex, batchSize=2 * BATCH_SIZE)
+def setup(filePath):
+    data = getData(filePath)
+    wordMapping, reverseWordMapping, allowableVocab, vocabularySize = buildVocab(data)
+    trainData, validData, testData = splitData(data)
+    print("Train data")
+    trainDl = buildDataLoader(trainData, wordMapping, batchSize=BATCH_SIZE, shuffle=True)
+    print("Validation data")
+    validDl = buildDataLoader(validData, wordMapping, batchSize=2 * BATCH_SIZE)
+    print("Test data")
+    testDl = buildDataLoader(testData, wordMapping, batchSize=2 * BATCH_SIZE)
+    return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, trainDl, validDl, testDl
 
 
 class continuousBagOfWords(nn.Module):
@@ -130,6 +134,7 @@ class continuousBagOfWords(nn.Module):
         self.embeddings = nn.Embedding(vocabSize, embeddingDim)
         self.linear = nn.Linear(embeddingDim, vocabSize)
         self.contextSize = contextSize
+        self.embeddingDim = embeddingDim
 
     def forward(self, inputs):
         embeds = self.embeddings(inputs)
@@ -138,45 +143,121 @@ class continuousBagOfWords(nn.Module):
         return logProbs
 
 
-trainLosses = []
-valLosses = []
-lossFunction = nn.NLLLoss()
-model = continuousBagOfWords(VOCAB_SIZE, EMBEDDING_DIM, CONTEXT_SIZE)
-optimizer = optim.SGD(model.parameters(), lr=LEARNING_RATE, momentum=MOMENTUM, nesterov=True)
-scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=LEARNING_RATE_DECAY_FACTOR, patience=PATIENCE, verbose=True)
+def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM, contextSize=CONTEXT_SIZE,
+          lr=LEARNING_RATE, momentum=MOMENTUM, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR, patience=PATIENCE):
+    trainLosses = []
+    valLosses = []
+    lossFunction = nn.NLLLoss()
+    model = continuousBagOfWords(vocabSize, embeddingDim, contextSize)
+    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
+                                  verbose=True)
 
-for epoch in range(EPOCHS):
-    print("Epoch:", epoch)
-    now = datetime.now()
+    for epoch in range(epochs):
+        print("Epoch:", epoch)
+        now = datetime.now()
 
-    model.train()
-    totalLoss = 0
-    for xb, yb in trainDl:
-        predictions = model(xb)
-        loss = lossFunction(predictions, yb)
-        loss.backward()
-        totalLoss += loss.item()
-        optimizer.step()
-        optimizer.zero_grad()
-    trainLoss = totalLoss / len(trainDl)
-    print("Training loss:", trainLoss)
-    trainLosses.append(trainLoss)
+        model.train()
+        totalLoss = 0
+        for xb, yb in trainDl:
+            predictions = model(xb)
+            loss = lossFunction(predictions, yb)
+            loss.backward()
+            totalLoss += loss.item()
+            optimizer.step()
+            optimizer.zero_grad()
+        trainLoss = totalLoss / len(trainDl)
+        print("Training loss:", trainLoss)
+        trainLosses.append(trainLoss)
 
+        model.eval()
+        with torch.no_grad():
+            validLoss = sum(lossFunction(model(xb), yb) for xb, yb in validDl).item()
+        validLoss = validLoss / len(validDl)
+        valLosses.append(validLoss)
+        print("Validation loss:", validLoss)
+
+        seconds = (datetime.now() - now).total_seconds()
+        print("Took:", seconds)
+        scheduler.step(validLoss)
+
+    plt.plot(trainLosses, 'go--', linewidth=2, markersize=12)
+    plt.plot(valLosses, 'bo--', linewidth=2, markersize=12)
+
+    return model
+
+
+def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary):
+    torch.save(model.state_dict(), modelName + '.pt')
+    outfile = open(modelName + 'WordMapping', 'wb')
+    pickle.dump(wordMapping, outfile)
+    outfile.close()
+    outfile = open(modelName + 'reverseWordMapping', 'wb')
+    pickle.dump(reverseWordMapping, outfile)
+    outfile.close()
+    outfile = open(modelName + 'Vocab', 'wb')
+    pickle.dump(vocabulary, outfile)
+    outfile.close()
+    modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
+    outfile = open(modelName + 'ModelData', 'wb')
+    pickle.dump(modelData, outfile)
+    outfile.close()
+
+
+def loadModelState(modelName):
+    infile = open(modelName + 'wordMapping', 'rb')
+    wordMapping = pickle.load(infile)
+    infile.close()
+    infile = open(modelName + 'reverseWordMapping', 'rb')
+    reverseWordMapping = pickle.load(infile)
+    infile.close()
+    infile = open(modelName + 'Vocab', 'rb')
+    vocab = pickle.load(infile)
+    infile.close()
+    infile = open(modelName + 'ModelData', 'rb')
+    modelData = pickle.load(infile)
+    infile.close()
+    model = continuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
+    model.load_state_dict(torch.load(modelName + '.pt'))
     model.eval()
+    return wordMapping, reverseWordMapping, vocab, model
+
+
+def topKSimilarities(model, word, wordMapping, vocabulary, K=10):
+    allSimilarities = {}
     with torch.no_grad():
-        validLoss = sum(lossFunction(model(xb), yb) for xb, yb in validDl).item()
-    validLoss = validLoss / len(validDl)
-    valLosses.append(validLoss)
-    print("Validation loss:", validLoss)
+        wordEmbedding = model.embeddings(torch.tensor(wordMapping[word], dtype=torch.long))
+        for otherWord in vocabulary:
+            otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
+            allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(wordEmbedding, otherEmbedding).item()
+    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K+1]}
 
-    seconds = (datetime.now() - now).total_seconds()
-    print("Took:", seconds)
-    scheduler.step(validLoss)
 
-plt.plot(trainLosses, 'go--', linewidth=2, markersize=12)
-plt.plot(valLosses, 'bo--', linewidth=2, markersize=12)
+def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, K=10):
+    allSimilarities = {}
+    with torch.no_grad():
+        word1Embedding = model.embeddings(torch.tensor(wordMapping[word1], dtype=torch.long))
+        word2Embedding = model.embeddings(torch.tensor(wordMapping[word2], dtype=torch.long))
+        word3Embedding = model.embeddings(torch.tensor(wordMapping[word3], dtype=torch.long))
+        diff = word1Embedding - word2Embedding + word3Embedding
+        for otherWord in vocabulary:
+            otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
+            allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(diff, otherEmbedding).item()
+    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
 
-with torch.no_grad():
-    testLoss = sum(lossFunction(model(xb), yb).item() for xb, yb in testDl)
-    test_loss = testLoss / len(testDl)
-    print(testLoss)
+
+def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss()):
+    with torch.no_grad():
+        testLoss = sum(lossFunction(model(xb), yb).item() for xb, yb in testDl)
+        testLoss = testLoss / len(testDl)
+    return testLoss
+
+# Example usage:
+
+# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, trainDl, validDl, testDl = setup('Downloads/reviews_Grocery_and_Gourmet_Food_5.json.gz')
+# trainedModel = train(trainDl, validDl, vocabSize)
+# print(finalEvaluation(trainedModel, testDl))
+# saveModelState(trainedModel, 'CBOW', wordIndex, reverseWordIndex, vocab)
+# wordIndex, reverseWordIndex, vocab, loadedModel = loadModelState('CBOW')
+# print(topKSimilarities(loadedModel, 'apple', wordIndex, vocab))
+# print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
