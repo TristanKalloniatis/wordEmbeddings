@@ -128,7 +128,7 @@ def setup(filePath):
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, trainDl, validDl, testDl
 
 
-class continuousBagOfWords(nn.Module):
+class ContinuousBagOfWords(nn.Module):
     def __init__(self, vocabSize, embeddingDim, contextSize):
         super().__init__()
         self.embeddings = nn.Embedding(vocabSize, embeddingDim)
@@ -148,7 +148,7 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
     trainLosses = []
     valLosses = []
     lossFunction = nn.NLLLoss()
-    model = continuousBagOfWords(vocabSize, embeddingDim, contextSize)
+    model = ContinuousBagOfWords(vocabSize, embeddingDim, contextSize)
     optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
                                   verbose=True)
@@ -217,7 +217,7 @@ def loadModelState(modelName):
     infile = open(modelName + 'ModelData', 'rb')
     modelData = pickle.load(infile)
     infile.close()
-    model = continuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
+    model = ContinuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
     model.load_state_dict(torch.load(modelName + '.pt'))
     model.eval()
     return wordMapping, reverseWordMapping, vocab, model
