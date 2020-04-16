@@ -9,6 +9,8 @@ from datetime import datetime
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
 import pickle
+from random import random
+from math import sqrt
 
 CONTEXT_SIZE = 5
 EMBEDDING_DIM = 16
@@ -21,6 +23,40 @@ BATCH_SIZE = 100
 EPOCHS = 20
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
+SUBSAMPLE_THRESHOLD = 1e-5
+UNIGRAM_DISTRIBUTION_POWER = 0.75
+
+
+def subsampleProbabilityDiscard(wordFrequency, threshold=SUBSAMPLE_THRESHOLD):
+    if wordFrequency <= 0:
+        return 0
+    rawResult = 1 - sqrt(threshold/wordFrequency)
+    if rawResult < 0:
+        return 0
+    return rawResult
+
+
+def subsampleWord(word, wordFrequencies, threshold=SUBSAMPLE_THRESHOLD):
+    return random() < subsampleProbabilityDiscard(wordFrequencies[word], threshold)
+
+
+def calculateWordFrequencies(rawData):
+    wordCounts = {}
+    for review in rawData:
+        words = preProcess(review['reviewText']).split()
+        for word in words:
+            if word in wordCounts:
+                wordCounts[word] += 1.
+            else:
+                wordCounts[word] = 1.
+    numWords = sum(wordCounts[word] for word in wordCounts)
+    return {word: wordCounts[word]/numWords for word in wordCounts}
+
+
+def noiseDistribution(wordFrequencies):
+    adjustedWordFrequencies = {wordFrequencies[word]**UNIGRAM_DISTRIBUTION_POWER for word in wordFrequencies}
+    normalisation = sum(adjustedWordFrequencies[word] for word in adjustedWordFrequencies)
+    return {word: adjustedWordFrequencies[word]/normalisation for word in adjustedWordFrequencies}
 
 
 def getData(filePath):
