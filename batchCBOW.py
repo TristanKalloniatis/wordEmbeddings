@@ -53,8 +53,8 @@ def calculateWordFrequencies(rawData):
     return {word: wordCounts[word]/numWords for word in wordCounts}
 
 
-def noiseDistribution(wordFrequencies):
-    adjustedWordFrequencies = {wordFrequencies[word]**UNIGRAM_DISTRIBUTION_POWER for word in wordFrequencies}
+def noiseDistribution(wordFrequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
+    adjustedWordFrequencies = {wordFrequencies[word]**unigramDistributionPower for word in wordFrequencies}
     normalisation = sum(adjustedWordFrequencies[word] for word in adjustedWordFrequencies)
     return {word: adjustedWordFrequencies[word]/normalisation for word in adjustedWordFrequencies}
 
