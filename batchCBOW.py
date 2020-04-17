@@ -25,6 +25,8 @@ LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
 SUBSAMPLE_THRESHOLD = 1e-5
 UNIGRAM_DISTRIBUTION_POWER = 0.75
+NUM_NEGATIVE_SAMPLES = 10
+UNKNOWN_TOKEN = '???'
 
 
 def subsampleProbabilityDiscard(wordFrequency, threshold=SUBSAMPLE_THRESHOLD):
@@ -40,21 +42,8 @@ def subsampleWord(word, wordFrequencies, threshold=SUBSAMPLE_THRESHOLD):
     return random() < subsampleProbabilityDiscard(wordFrequencies[word], threshold)
 
 
-def calculateWordFrequencies(rawData):
-    wordCounts = {}
-    for review in rawData:
-        words = preProcess(review['reviewText']).split()
-        for word in words:
-            if word in wordCounts:
-                wordCounts[word] += 1.
-            else:
-                wordCounts[word] = 1.
-    numWords = sum(wordCounts[word] for word in wordCounts)
-    return {word: wordCounts[word]/numWords for word in wordCounts}
-
-
-def noiseDistribution(wordFrequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
-    adjustedWordFrequencies = {wordFrequencies[word]**unigramDistributionPower for word in wordFrequencies}
+def noiseDistribution(frequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
+    adjustedWordFrequencies = {frequencies[word]**unigramDistributionPower for word in frequencies}
     normalisation = sum(adjustedWordFrequencies[word] for word in adjustedWordFrequencies)
     return {word: adjustedWordFrequencies[word]/normalisation for word in adjustedWordFrequencies}
 
@@ -70,12 +59,10 @@ def getData(filePath):
 
 
 def preProcess(text):
-    allowableChars = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's',
-                      't', 'u', 'v', 'w', 'x', 'y', 'z', ' ']
     text = text.lower()
     result = ''
     for x in text:
-        if x in allowableChars:
+        if x.isalpha() or x == ' ':
             result += x
     return result
 
@@ -96,24 +83,26 @@ def buildWordCounts(rawData):
 def buildVocab(rawData):
     wordCounts = buildWordCounts(rawData)
     allowableVocab = []
-    rareWordsExist = False
+    totalRareWords = 0
     for word in wordCounts:
         if wordCounts[word] >= MIN_WORD_COUNT:
             allowableVocab.append(word)
         else:
-            rareWordsExist = True
+            totalRareWords += 1
     wordMapping = {word: i for i, word in enumerate(allowableVocab)}
     reverseWordMapping = {i: word for word, i in wordMapping.items()}
-    if rareWordsExist:
-        reverseWordMapping[len(allowableVocab)] = '???'
-    for word in wordCounts:
-        if wordCounts[word] < MIN_WORD_COUNT:
-            wordMapping[word] = len(allowableVocab)
-    if rareWordsExist:
-        allowableVocab.append('???')
+    numWords = float(sum(wordCounts[word] for word in wordCounts))
+    frequencies = {word: wordCounts[word] / numWords for word in wordCounts}
+    if totalRareWords > 0:
+        reverseWordMapping[len(allowableVocab)] = UNKNOWN_TOKEN
+        for word in wordCounts:
+            if wordCounts[word] < MIN_WORD_COUNT:
+                wordMapping[word] = len(allowableVocab)
+        allowableVocab.append(UNKNOWN_TOKEN)
+        frequencies[UNKNOWN_TOKEN] = totalRareWords / numWords
     vocabularySize = len(allowableVocab)
     print("Vocabulary size:", vocabularySize)
-    return wordMapping, reverseWordMapping, allowableVocab, vocabularySize
+    return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies
 
 
 def preProcessWords(words, wordMapping):
@@ -133,12 +122,17 @@ def splitData(rawData):
                                                                         TRAIN_PROPORTION + VALID_PROPORTION)):]
 
 
-def buildDataLoader(rawData, wordMapping, batchSize=None, shuffle=False):
+def buildDataLoader(rawData, wordMapping, reverseWordMapping, frequencies, subSample=False, batchSize=None,
+                    shuffle=False):
     xs = []
     ys = []
     for review in rawData:
         dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping)
         for dataPointX, dataPointY in dataPoints:
+            if subSample:
+                targetWord = reverseWordMapping[dataPointY]
+                if subsampleWord(targetWord, frequencies):
+                    continue
             xs.append(dataPointX)
             ys.append(dataPointY)
     print("Size of data:", len(xs))
@@ -153,15 +147,17 @@ def buildDataLoader(rawData, wordMapping, batchSize=None, shuffle=False):
 
 def setup(filePath):
     data = getData(filePath)
-    wordMapping, reverseWordMapping, allowableVocab, vocabularySize = buildVocab(data)
+    wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies = buildVocab(data)
     trainData, validData, testData = splitData(data)
     print("Train data")
-    trainDl = buildDataLoader(trainData, wordMapping, batchSize=BATCH_SIZE, shuffle=True)
+    trainDl = buildDataLoader(trainData, wordMapping, reverseWordMapping, frequencies, subSample=True,
+                              batchSize=BATCH_SIZE, shuffle=True)
     print("Validation data")
-    validDl = buildDataLoader(validData, wordMapping, batchSize=2 * BATCH_SIZE)
+    validDl = buildDataLoader(validData, wordMapping, reverseWordMapping, frequencies, subSample=True,
+                              batchSize=2*BATCH_SIZE)
     print("Test data")
-    testDl = buildDataLoader(testData, wordMapping, batchSize=2 * BATCH_SIZE)
-    return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, trainDl, validDl, testDl
+    testDl = buildDataLoader(testData, wordMapping, reverseWordMapping, frequencies, batchSize=2*BATCH_SIZE)
+    return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, trainDl, validDl, testDl
 
 
 class ContinuousBagOfWords(nn.Module):
@@ -171,12 +167,27 @@ class ContinuousBagOfWords(nn.Module):
         self.linear = nn.Linear(embeddingDim, vocabSize)
         self.contextSize = contextSize
         self.embeddingDim = embeddingDim
+        self.vocabSize = vocabSize
 
     def forward(self, inputs):
         embeds = self.embeddings(inputs)
         out = self.linear(embeds.sum(dim=-2))
-        logProbs = F.log_softmax(out, dim=-1)
-        return logProbs
+        logProbabilities = F.log_softmax(out, dim=-1)
+        return logProbabilities
+
+
+class SkipGramWithNegativeSampling(nn.Module):
+    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples=NUM_NEGATIVE_SAMPLES):
+        super().__init__()
+        self.inEmbeddings = nn.Embedding(vocabSize, embeddingDim)
+        self.outEmbeddings = nn.Embedding(vocabSize, embeddingDim)
+        self.contextSize = contextSize
+        self.embeddingDim = embeddingDim
+        self.vocabSize = vocabSize
+        self.numNegativeSamples = numNegativeSamples
+
+    def forward(self, inputs):
+        pass
 
 
 def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM, contextSize=CONTEXT_SIZE,
@@ -223,7 +234,7 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
     return model
 
 
-def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary):
+def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary, frequencies):
     torch.save(model.state_dict(), modelName + '.pt')
     outfile = open(modelName + 'WordMapping', 'wb')
     pickle.dump(wordMapping, outfile)
@@ -233,6 +244,9 @@ def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary
     outfile.close()
     outfile = open(modelName + 'Vocab', 'wb')
     pickle.dump(vocabulary, outfile)
+    outfile.close()
+    outfile = open(modelName + 'Frequencies', 'wb')
+    pickle.dump(frequencies, outfile)
     outfile.close()
     modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
     outfile = open(modelName + 'ModelData', 'wb')
@@ -250,13 +264,16 @@ def loadModelState(modelName):
     infile = open(modelName + 'Vocab', 'rb')
     vocab = pickle.load(infile)
     infile.close()
+    infile = open(modelName + 'Frequencies', 'rb')
+    frequencies = pickle.load(infile)
+    infile.close()
     infile = open(modelName + 'ModelData', 'rb')
     modelData = pickle.load(infile)
     infile.close()
     model = ContinuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
     model.load_state_dict(torch.load(modelName + '.pt'))
     model.eval()
-    return wordMapping, reverseWordMapping, vocab, model
+    return wordMapping, reverseWordMapping, vocab, frequencies, model
 
 
 def topKSimilarities(model, word, wordMapping, vocabulary, K=10):
@@ -290,10 +307,11 @@ def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss()):
 
 # Example usage:
 
-# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, trainDl, validDl, testDl = setup('Downloads/reviews_Grocery_and_Gourmet_Food_5.json.gz')
+# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDl, validDl, testDl =
+#                                                       setup('reviews_Grocery_and_Gourmet_Food_5.json.gz')
 # trainedModel = train(trainDl, validDl, vocabSize)
 # print(finalEvaluation(trainedModel, testDl))
-# saveModelState(trainedModel, 'CBOW', wordIndex, reverseWordIndex, vocab)
-# wordIndex, reverseWordIndex, vocab, loadedModel = loadModelState('CBOW')
+# saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies)
+# wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample')
 # print(topKSimilarities(loadedModel, 'apple', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
