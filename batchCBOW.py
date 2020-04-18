@@ -1,14 +1,14 @@
 import gzip
-import json
+from json import loads
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.optim as optim
+from torch.optim import SGD
 from torch.utils.data import DataLoader, TensorDataset
 from datetime import datetime
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 import matplotlib.pyplot as plt
-import pickle
+from pickle import dump, load
 from random import random
 from math import sqrt
 
@@ -52,7 +52,7 @@ def getData(filePath):
     file = gzip.open(filePath, mode='rb')
     rawData = []
     for line in file:
-        rawData.append(json.loads(line))
+        rawData.append(loads(line))
     file.close()
     print("Number of reviews:", len(rawData))
     return rawData
@@ -203,7 +203,7 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
     valLosses = []
     lossFunction = nn.NLLLoss()
     model = ContinuousBagOfWords(vocabSize, embeddingDim, contextSize)
-    optimizer = optim.SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
+    optimizer = SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
                                   verbose=True)
 
@@ -252,48 +252,48 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
 def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary, frequencies, algorithm='CBOW'):
     torch.save(model.state_dict(), modelName + '.pt')
     outfile = open(modelName + 'WordMapping', 'wb')
-    pickle.dump(wordMapping, outfile)
+    dump(wordMapping, outfile)
     outfile.close()
     outfile = open(modelName + 'reverseWordMapping', 'wb')
-    pickle.dump(reverseWordMapping, outfile)
+    dump(reverseWordMapping, outfile)
     outfile.close()
     outfile = open(modelName + 'Vocab', 'wb')
-    pickle.dump(vocabulary, outfile)
+    dump(vocabulary, outfile)
     outfile.close()
     outfile = open(modelName + 'Frequencies', 'wb')
-    pickle.dump(frequencies, outfile)
+    dump(frequencies, outfile)
     outfile.close()
     if algorithm == 'CBOW':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
     else:
-        # SG code here
-        pass
+        modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize,
+                     'numNegativeSamples': model.numNegativeSamples}
     outfile = open(modelName + 'ModelData', 'wb')
-    pickle.dump(modelData, outfile)
+    dump(modelData, outfile)
     outfile.close()
 
 
 def loadModelState(modelName, algorithm='CBOW'):
     infile = open(modelName + 'wordMapping', 'rb')
-    wordMapping = pickle.load(infile)
+    wordMapping = load(infile)
     infile.close()
     infile = open(modelName + 'reverseWordMapping', 'rb')
-    reverseWordMapping = pickle.load(infile)
+    reverseWordMapping = load(infile)
     infile.close()
     infile = open(modelName + 'Vocab', 'rb')
-    vocab = pickle.load(infile)
+    vocab = load(infile)
     infile.close()
     infile = open(modelName + 'Frequencies', 'rb')
-    frequencies = pickle.load(infile)
+    frequencies = load(infile)
     infile.close()
     infile = open(modelName + 'ModelData', 'rb')
-    modelData = pickle.load(infile)
+    modelData = load(infile)
     infile.close()
     if algorithm == 'CBOW':
         model = ContinuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
     else:
-        # SG code here
-        pass
+        model = SkipGramWithNegativeSampling(len(vocab), modelData['embeddingDim'], modelData['contextSize'],
+                                             modelData['numNegativeSamples'])
     model.load_state_dict(torch.load(modelName + '.pt'))
     model.eval()
     return wordMapping, reverseWordMapping, vocab, frequencies, model
@@ -338,7 +338,7 @@ def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss(), algorithm='CBOW'):
 #                                                       setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', 'CBOW')
 # trainedModel = train(trainDl, validDl, vocabSize)
 # print(finalEvaluation(trainedModel, testDl))
-# saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies)
-# wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample')
+# saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies, 'CBOW')
+# wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample', 'CBOW')
 # print(topKSimilarities(loadedModel, 'apple', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
