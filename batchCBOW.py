@@ -32,7 +32,7 @@ UNKNOWN_TOKEN = '???'
 def subsampleProbabilityDiscard(wordFrequency, threshold=SUBSAMPLE_THRESHOLD):
     if wordFrequency <= 0:
         return 0
-    rawResult = 1 - sqrt(threshold/wordFrequency)
+    rawResult = 1 - sqrt(threshold / wordFrequency)
     if rawResult < 0:
         return 0
     return rawResult
@@ -43,9 +43,9 @@ def subsampleWord(word, wordFrequencies, threshold=SUBSAMPLE_THRESHOLD):
 
 
 def noiseDistribution(frequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
-    adjustedWordFrequencies = {frequencies[word]**unigramDistributionPower for word in frequencies}
+    adjustedWordFrequencies = {frequencies[word] ** unigramDistributionPower for word in frequencies}
     normalisation = sum(adjustedWordFrequencies[word] for word in adjustedWordFrequencies)
-    return {word: adjustedWordFrequencies[word]/normalisation for word in adjustedWordFrequencies}
+    return {word: adjustedWordFrequencies[word] / normalisation for word in adjustedWordFrequencies}
 
 
 def getData(filePath):
@@ -80,12 +80,12 @@ def buildWordCounts(rawData):
     return wordCounts
 
 
-def buildVocab(rawData):
+def buildVocab(rawData, minWordCount=MIN_WORD_COUNT, unknownToken=UNKNOWN_TOKEN):
     wordCounts = buildWordCounts(rawData)
     allowableVocab = []
     totalRareWords = 0
     for word in wordCounts:
-        if wordCounts[word] >= MIN_WORD_COUNT:
+        if wordCounts[word] >= minWordCount:
             allowableVocab.append(word)
         else:
             totalRareWords += 1
@@ -94,40 +94,44 @@ def buildVocab(rawData):
     numWords = float(sum(wordCounts[word] for word in wordCounts))
     frequencies = {word: wordCounts[word] / numWords for word in wordCounts}
     if totalRareWords > 0:
-        reverseWordMapping[len(allowableVocab)] = UNKNOWN_TOKEN
+        reverseWordMapping[len(allowableVocab)] = unknownToken
         for word in wordCounts:
-            if wordCounts[word] < MIN_WORD_COUNT:
+            if wordCounts[word] < minWordCount:
                 wordMapping[word] = len(allowableVocab)
-        allowableVocab.append(UNKNOWN_TOKEN)
-        frequencies[UNKNOWN_TOKEN] = totalRareWords / numWords
+        allowableVocab.append(unknownToken)
+        frequencies[unknownToken] = totalRareWords / numWords
     vocabularySize = len(allowableVocab)
     print("Vocabulary size:", vocabularySize)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies
 
 
-def preProcessWords(words, wordMapping):
+def preProcessWords(words, wordMapping, contextSize=CONTEXT_SIZE, algorithm='CBOW'):
     dataPoints = []
-    for i in range(CONTEXT_SIZE, len(words) - CONTEXT_SIZE):
-        context = [wordMapping[words[i - j - 1]] for j in range(CONTEXT_SIZE)]
-        context += [wordMapping[words[i + j + 1]] for j in range(CONTEXT_SIZE)]
+    for i in range(contextSize, len(words) - contextSize):
+        context = [wordMapping[words[i - j - 1]] for j in range(contextSize)]
+        context += [wordMapping[words[i + j + 1]] for j in range(contextSize)]
         target = wordMapping[words[i]]
-        dataPoints.append((context, target))
+        if algorithm == 'CBOW':
+            dataPoints.append((context, target))
+        else:
+            for word in context:
+                dataPoints.append((word, target))
     return dataPoints
 
 
-def splitData(rawData):
-    return rawData[: int(len(rawData) * TRAIN_PROPORTION)], rawData[int(len(rawData) * TRAIN_PROPORTION): int(
-        len(rawData) * (TRAIN_PROPORTION + VALID_PROPORTION))], rawData[
-                                                                int(len(rawData) * (
-                                                                        TRAIN_PROPORTION + VALID_PROPORTION)):]
+def splitData(rawData, trainProportion=TRAIN_PROPORTION, validProportion=VALID_PROPORTION):
+    trainData = rawData[: int(len(rawData) * trainProportion)]
+    validData = rawData[int(len(rawData) * trainProportion):int(len(rawData) * (trainProportion + validProportion))]
+    testData = rawData[int(len(rawData) * (trainProportion + validProportion)):]
+    return trainData, validData, testData
 
 
 def buildDataLoader(rawData, wordMapping, reverseWordMapping, frequencies, subSample=False, batchSize=None,
-                    shuffle=False):
+                    shuffle=False, algorithm='CBOW'):
     xs = []
     ys = []
     for review in rawData:
-        dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping)
+        dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping, algorithm)
         for dataPointX, dataPointY in dataPoints:
             if subSample:
                 targetWord = reverseWordMapping[dataPointY]
@@ -145,18 +149,19 @@ def buildDataLoader(rawData, wordMapping, reverseWordMapping, frequencies, subSa
     return dl
 
 
-def setup(filePath):
+def setup(filePath, batchSize=BATCH_SIZE, algorithm='CBOW'):
     data = getData(filePath)
     wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies = buildVocab(data)
     trainData, validData, testData = splitData(data)
     print("Train data")
     trainDl = buildDataLoader(trainData, wordMapping, reverseWordMapping, frequencies, subSample=True,
-                              batchSize=BATCH_SIZE, shuffle=True)
+                              batchSize=batchSize, shuffle=True, algorithm=algorithm)
     print("Validation data")
     validDl = buildDataLoader(validData, wordMapping, reverseWordMapping, frequencies, subSample=True,
-                              batchSize=2*BATCH_SIZE)
+                              batchSize=2 * batchSize, algorithm=algorithm)
     print("Test data")
-    testDl = buildDataLoader(testData, wordMapping, reverseWordMapping, frequencies, batchSize=2*BATCH_SIZE)
+    testDl = buildDataLoader(testData, wordMapping, reverseWordMapping, frequencies, batchSize=2 * batchSize,
+                             algorithm=algorithm)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, trainDl, validDl, testDl
 
 
@@ -187,11 +192,13 @@ class SkipGramWithNegativeSampling(nn.Module):
         self.numNegativeSamples = numNegativeSamples
 
     def forward(self, inputs):
-        pass
+        inputEmbedding = self.inEmbeddings(inputs)
+        return 1
 
 
 def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM, contextSize=CONTEXT_SIZE,
-          lr=LEARNING_RATE, momentum=MOMENTUM, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR, patience=PATIENCE):
+          lr=LEARNING_RATE, momentum=MOMENTUM, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR, patience=PATIENCE,
+          algorithm='CBOW'):
     trainLosses = []
     valLosses = []
     lossFunction = nn.NLLLoss()
@@ -207,8 +214,12 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
         model.train()
         totalLoss = 0
         for xb, yb in trainDl:
-            predictions = model(xb)
-            loss = lossFunction(predictions, yb)
+            if algorithm == 'CBOW':
+                predictions = model(xb)
+                loss = lossFunction(predictions, yb)
+            else:
+                # SG code here
+                pass
             loss.backward()
             totalLoss += loss.item()
             optimizer.step()
@@ -219,7 +230,11 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
 
         model.eval()
         with torch.no_grad():
-            validLoss = sum(lossFunction(model(xb), yb) for xb, yb in validDl).item()
+            if algorithm == 'CBOW':
+                validLoss = sum(lossFunction(model(xb), yb) for xb, yb in validDl).item()
+            else:
+                # SG code here
+                pass
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
         print("Validation loss:", validLoss)
@@ -234,7 +249,7 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
     return model
 
 
-def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary, frequencies):
+def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary, frequencies, algorithm='CBOW'):
     torch.save(model.state_dict(), modelName + '.pt')
     outfile = open(modelName + 'WordMapping', 'wb')
     pickle.dump(wordMapping, outfile)
@@ -248,13 +263,17 @@ def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary
     outfile = open(modelName + 'Frequencies', 'wb')
     pickle.dump(frequencies, outfile)
     outfile.close()
-    modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
+    if algorithm == 'CBOW':
+        modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
+    else:
+        # SG code here
+        pass
     outfile = open(modelName + 'ModelData', 'wb')
     pickle.dump(modelData, outfile)
     outfile.close()
 
 
-def loadModelState(modelName):
+def loadModelState(modelName, algorithm='CBOW'):
     infile = open(modelName + 'wordMapping', 'rb')
     wordMapping = pickle.load(infile)
     infile.close()
@@ -270,7 +289,11 @@ def loadModelState(modelName):
     infile = open(modelName + 'ModelData', 'rb')
     modelData = pickle.load(infile)
     infile.close()
-    model = ContinuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
+    if algorithm == 'CBOW':
+        model = ContinuousBagOfWords(len(vocab), modelData['embeddingDim'], modelData['contextSize'])
+    else:
+        # SG code here
+        pass
     model.load_state_dict(torch.load(modelName + '.pt'))
     model.eval()
     return wordMapping, reverseWordMapping, vocab, frequencies, model
@@ -283,7 +306,7 @@ def topKSimilarities(model, word, wordMapping, vocabulary, K=10):
         for otherWord in vocabulary:
             otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(wordEmbedding, otherEmbedding).item()
-    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K+1]}
+    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K + 1]}
 
 
 def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, K=10):
@@ -299,16 +322,20 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
 
 
-def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss()):
+def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss(), algorithm='CBOW'):
     with torch.no_grad():
-        testLoss = sum(lossFunction(model(xb), yb).item() for xb, yb in testDl)
+        if algorithm == 'CBOW':
+            testLoss = sum(lossFunction(model(xb), yb).item() for xb, yb in testDl)
+        else:
+            # SG code here
+            pass
         testLoss = testLoss / len(testDl)
     return testLoss
 
 # Example usage:
 
 # wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDl, validDl, testDl =
-#                                                       setup('reviews_Grocery_and_Gourmet_Food_5.json.gz')
+#                                                       setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', 'CBOW')
 # trainedModel = train(trainDl, validDl, vocabSize)
 # print(finalEvaluation(trainedModel, testDl))
 # saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies)
