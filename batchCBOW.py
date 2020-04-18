@@ -38,8 +38,8 @@ def subsampleProbabilityDiscard(wordFrequency, threshold=SUBSAMPLE_THRESHOLD):
     return rawResult
 
 
-def subsampleWord(word, wordFrequencies, threshold=SUBSAMPLE_THRESHOLD):
-    return random() < subsampleProbabilityDiscard(wordFrequencies[word], threshold)
+def subsampleWord(word, frequencies, threshold=SUBSAMPLE_THRESHOLD):
+    return random() < subsampleProbabilityDiscard(frequencies[word], threshold)
 
 
 def noiseDistribution(frequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
@@ -127,15 +127,16 @@ def splitData(rawData, trainProportion=TRAIN_PROPORTION, validProportion=VALID_P
 
 
 def buildDataLoader(rawData, wordMapping, reverseWordMapping, frequencies, subSample=False, batchSize=None,
-                    shuffle=False, algorithm='CBOW'):
+                    shuffle=False, contextSize=CONTEXT_SIZE, algorithm='CBOW', threshold=SUBSAMPLE_THRESHOLD):
     xs = []
     ys = []
     for review in rawData:
-        dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping, algorithm)
+        dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping, contextSize=contextSize,
+                                     algorithm=algorithm)
         for dataPointX, dataPointY in dataPoints:
             if subSample:
                 targetWord = reverseWordMapping[dataPointY]
-                if subsampleWord(targetWord, frequencies):
+                if subsampleWord(targetWord, frequencies, threshold=threshold):
                     continue
             xs.append(dataPointX)
             ys.append(dataPointY)
@@ -149,19 +150,25 @@ def buildDataLoader(rawData, wordMapping, reverseWordMapping, frequencies, subSa
     return dl
 
 
-def setup(filePath, batchSize=BATCH_SIZE, algorithm='CBOW'):
+def setup(filePath, batchSize=BATCH_SIZE, contextSize=CONTEXT_SIZE, minWordCount=MIN_WORD_COUNT,
+          unknownToken=UNKNOWN_TOKEN, trainProportion=TRAIN_PROPORTION, validProportion=VALID_PROPORTION,
+          algorithm='CBOW', threshold=SUBSAMPLE_THRESHOLD):
     data = getData(filePath)
-    wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies = buildVocab(data)
-    trainData, validData, testData = splitData(data)
+    wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies = buildVocab(data,
+                                                                                              minWordCount=minWordCount,
+                                                                                              unknownToken=unknownToken)
+    trainData, validData, testData = splitData(data, trainProportion, validProportion)
     print("Train data")
     trainDl = buildDataLoader(trainData, wordMapping, reverseWordMapping, frequencies, subSample=True,
-                              batchSize=batchSize, shuffle=True, algorithm=algorithm)
+                              batchSize=batchSize, shuffle=True, contextSize=contextSize, algorithm=algorithm,
+                              threshold=threshold)
     print("Validation data")
     validDl = buildDataLoader(validData, wordMapping, reverseWordMapping, frequencies, subSample=True,
-                              batchSize=2 * batchSize, algorithm=algorithm)
+                              batchSize=2 * batchSize, shuffle=False, contextSize=contextSize, algorithm=algorithm,
+                              threshold=threshold)
     print("Test data")
-    testDl = buildDataLoader(testData, wordMapping, reverseWordMapping, frequencies, batchSize=2 * batchSize,
-                             algorithm=algorithm)
+    testDl = buildDataLoader(testData, wordMapping, reverseWordMapping, frequencies, subSample=False,
+                             batchSize=2 * batchSize, shuffle=False, contextSize=contextSize, algorithm=algorithm)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, trainDl, validDl, testDl
 
 
@@ -281,7 +288,7 @@ def loadModelState(modelName, algorithm='CBOW'):
     reverseWordMapping = load(infile)
     infile.close()
     infile = open(modelName + 'Vocab', 'rb')
-    vocab = load(infile)
+    vocabulary = load(infile)
     infile.close()
     infile = open(modelName + 'Frequencies', 'rb')
     frequencies = load(infile)
@@ -296,7 +303,7 @@ def loadModelState(modelName, algorithm='CBOW'):
                                              modelData['numNegativeSamples'])
     model.load_state_dict(torch.load(modelName + '.pt'))
     model.eval()
-    return wordMapping, reverseWordMapping, vocab, frequencies, model
+    return wordMapping, reverseWordMapping, vocabulary, frequencies, model
 
 
 def topKSimilarities(model, word, wordMapping, vocabulary, K=10):
@@ -332,13 +339,14 @@ def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss(), algorithm='CBOW'):
         testLoss = testLoss / len(testDl)
     return testLoss
 
+
 # Example usage:
 
-# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDl, validDl, testDl =
-#                                                       setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', 'CBOW')
-# trainedModel = train(trainDl, validDl, vocabSize)
-# print(finalEvaluation(trainedModel, testDl))
-# saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies, 'CBOW')
+wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDataLoader, validDataLoader, testDataLoader = \
+    setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', algorithm='CBOW')
+trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE)
+print(finalEvaluation(trainedModel, testDataLoader))
+saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies, 'CBOW')
 # wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample', 'CBOW')
 # print(topKSimilarities(loadedModel, 'apple', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
