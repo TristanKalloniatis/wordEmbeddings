@@ -23,7 +23,7 @@ BATCH_SIZE = 100
 EPOCHS = 20
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
-SUBSAMPLE_THRESHOLD = 1e-5
+SUBSAMPLE_THRESHOLD = 1e-3
 UNIGRAM_DISTRIBUTION_POWER = 0.75
 NUM_NEGATIVE_SAMPLES = 10
 UNKNOWN_TOKEN = '???'
@@ -95,6 +95,7 @@ def buildVocab(rawData, minWordCount=MIN_WORD_COUNT, unknownToken=UNKNOWN_TOKEN)
     frequencies = {word: wordCounts[word] / numWords for word in wordCounts}
     if totalRareWords > 0:
         reverseWordMapping[len(allowableVocab)] = unknownToken
+        wordMapping[UNKNOWN_TOKEN] = len(allowableVocab)
         for word in wordCounts:
             if wordCounts[word] < minWordCount:
                 wordMapping[word] = len(allowableVocab)
@@ -311,6 +312,8 @@ def topKSimilarities(model, word, wordMapping, vocabulary, K=10):
     with torch.no_grad():
         wordEmbedding = model.embeddings(torch.tensor(wordMapping[word], dtype=torch.long))
         for otherWord in vocabulary:
+            if otherWord == UNKNOWN_TOKEN:
+                continue
             otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(wordEmbedding, otherEmbedding).item()
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K + 1]}
@@ -324,6 +327,8 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
         word3Embedding = model.embeddings(torch.tensor(wordMapping[word3], dtype=torch.long))
         diff = word1Embedding - word2Embedding + word3Embedding
         for otherWord in vocabulary:
+            if otherWord == UNKNOWN_TOKEN:
+                continue
             otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(diff, otherEmbedding).item()
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
@@ -346,7 +351,9 @@ wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDataLoader
     setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', algorithm='CBOW')
 trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE)
 print(finalEvaluation(trainedModel, testDataLoader))
-saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies, 'CBOW')
-# wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample', 'CBOW')
+saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies,
+               algorithm='CBOW')
+# wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample',
+#                                                                                   algorithm='CBOW')
 # print(topKSimilarities(loadedModel, 'apple', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
