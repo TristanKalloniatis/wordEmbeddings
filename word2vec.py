@@ -32,10 +32,11 @@ IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
 
 
 def checkAlgorithmImplemented(algorithm):
-    if algorithm not in IMPLEMENTED_MODELS:
+    if algorithm.upper() not in IMPLEMENTED_MODELS:
         errorMessage = 'Unknown embedding algorithm: ' + str(algorithm) + '; supported options are:'
         for model in IMPLEMENTED_MODELS:
             errorMessage += ' ' + model
+        errorMessage += '.'
         raise Exception(errorMessage)
     return
 
@@ -50,7 +51,10 @@ def subsampleProbabilityDiscard(wordFrequency, threshold):
 
 
 def subsampleWord(word, frequencies, threshold):
-    return random() < subsampleProbabilityDiscard(frequencies[word], threshold)
+    if threshold is not None:
+        return random() < subsampleProbabilityDiscard(frequencies[word], threshold)
+    else:
+        return False
 
 
 def noiseDistribution(frequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
@@ -124,9 +128,9 @@ def preProcessWords(words, wordMapping, contextSize, algorithm):
         context = [wordMapping[words[i - j - 1]] for j in range(contextSize)]
         context += [wordMapping[words[i + j + 1]] for j in range(contextSize)]
         target = wordMapping[words[i]]
-        if algorithm == 'CBOW':
+        if algorithm.upper() == 'CBOW':
             dataPoints.append((context, target))
-        elif algorithm == 'SGNS':
+        elif algorithm.upper() == 'SGNS':
             for word in context:
                 dataPoints.append((word, target))
     return dataPoints
@@ -235,10 +239,10 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
         model.train()
         totalLoss = 0
         for xb, yb in trainDl:
-            if algorithm == 'CBOW':
+            if algorithm.upper() == 'CBOW':
                 predictions = model(xb)
                 loss = lossFunction(predictions, yb)
-            elif algorithm == 'SGNS':
+            elif algorithm.upper() == 'SGNS':
                 # SG code here
                 pass
             loss.backward()
@@ -251,9 +255,9 @@ def train(trainDl, validDl, vocabSize, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM
 
         model.eval()
         with torch.no_grad():
-            if algorithm == 'CBOW':
+            if algorithm.upper() == 'CBOW':
                 validLoss = sum(lossFunction(model(xb), yb) for xb, yb in validDl).item()
-            elif algorithm == 'SGNS':
+            elif algorithm.upper() == 'SGNS':
                 # SG code here
                 pass
         validLoss = validLoss / len(validDl)
@@ -285,9 +289,9 @@ def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary
     outfile = open(modelName + 'Frequencies', 'wb')
     dump(frequencies, outfile)
     outfile.close()
-    if algorithm == 'CBOW':
+    if algorithm.upper() == 'CBOW':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
-    elif algorithm == 'SGNS':
+    elif algorithm.upper() == 'SGNS':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize,
                      'numNegativeSamples': model.numNegativeSamples}
     outfile = open(modelName + 'ModelData', 'wb')
@@ -312,9 +316,9 @@ def loadModelState(modelName, algorithm='CBOW'):
     infile = open(modelName + 'ModelData', 'rb')
     modelData = load(infile)
     infile.close()
-    if algorithm == 'CBOW':
+    if algorithm.upper() == 'CBOW':
         model = ContinuousBagOfWords(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'])
-    else:
+    elif algorithm.upper() == 'SGNS':
         model = SkipGramWithNegativeSampling(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'],
                                              modelData['numNegativeSamples'])
     model.load_state_dict(torch.load(modelName + '.pt'))
@@ -352,9 +356,9 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
 def finalEvaluation(model, testDl, lossFunction=nn.NLLLoss(), algorithm='CBOW'):
     checkAlgorithmImplemented(algorithm)
     with torch.no_grad():
-        if algorithm == 'CBOW':
+        if algorithm.upper() == 'CBOW':
             testLoss = sum(lossFunction(model(xb), yb).item() for xb, yb in testDl)
-        elif algorithm == 'SGNS':
+        elif algorithm.upper() == 'SGNS':
             # SG code here
             pass
         testLoss = testLoss / len(testDl)
