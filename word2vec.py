@@ -29,6 +29,7 @@ NUM_NEGATIVE_SAMPLES = 10
 UNKNOWN_TOKEN = '???'
 INNER_PRODUCT_CLAMP = 5.
 IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
+MIN_REVIEW_LENGTH = 2 * CONTEXT_SIZE + 1
 
 
 def checkAlgorithmImplemented(algorithm):
@@ -123,6 +124,8 @@ def buildVocab(rawData, minWordCount, unknownToken):
 
 def preProcessWords(words, wordMapping, contextSize, algorithm):
     checkAlgorithmImplemented(algorithm)
+    if len(words) < MIN_REVIEW_LENGTH:
+        return []
     dataPoints = []
     for i in range(contextSize, len(words) - contextSize):
         context = [wordMapping[words[i - j - 1]] for j in range(contextSize)]
@@ -206,17 +209,19 @@ class ContinuousBagOfWords(nn.Module):
 
 
 class SkipGramWithNegativeSampling(nn.Module):
-    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples=NUM_NEGATIVE_SAMPLES):
+    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples):
         super().__init__()
-        self.inEmbeddings = nn.Embedding(vocabSize, embeddingDim)
+        self.embeddings = nn.Embedding(vocabSize, embeddingDim) # These will be the inEmbeddings used in evaluation
         self.outEmbeddings = nn.Embedding(vocabSize, embeddingDim)
         self.contextSize = contextSize
         self.embeddingDim = embeddingDim
         self.vocabSize = vocabSize
         self.numNegativeSamples = numNegativeSamples
 
-    def forward(self, inputs):
-        inputEmbedding = self.inEmbeddings(inputs)
+    def forward(self, inputs, positiveOutputs, negativeOutputs):
+        inputEmbeddings = self.embeddings(inputs)
+        positiveOutputEmbeddings = self.outEmbeddings(positiveOutputs)
+        negativeOutputEmbeddings = self.outEmbeddings(negativeOutputs)
         return 1
 
 
