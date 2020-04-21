@@ -59,9 +59,9 @@ def subsampleWord(word, frequencies, threshold):
 
 
 def noiseDistribution(frequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
-    adjustedWordFrequencies = {frequencies[word] ** unigramDistributionPower for word in frequencies}
-    normalisation = sum(adjustedWordFrequencies[word] for word in adjustedWordFrequencies)
-    return {word: adjustedWordFrequencies[word] / normalisation for word in adjustedWordFrequencies}
+    adjustedWordFrequencies = {frequencies[indexOfWord] ** unigramDistributionPower for indexOfWord in frequencies}
+    normalisation = sum(adjustedWordFrequencies[indexOfWord] for indexOfWord in adjustedWordFrequencies)
+    return {indexOfWord: adjustedWordFrequencies[indexOfWord] / normalisation for indexOfWord in adjustedWordFrequencies}
 
 
 def getData(filePath):
@@ -108,15 +108,15 @@ def buildVocab(rawData, minWordCount, unknownToken):
     wordMapping = {word: i for i, word in enumerate(allowableVocab)}
     reverseWordMapping = {i: word for word, i in wordMapping.items()}
     numWords = float(sum(wordCounts[word] for word in wordCounts))
-    frequencies = {word: wordCounts[word] / numWords for word in wordCounts}
+    frequencies = {wordMapping[word]: wordCounts[word] / numWords for word in allowableVocab}
     if totalRareWords > 0:
         reverseWordMapping[len(allowableVocab)] = unknownToken
-        wordMapping[UNKNOWN_TOKEN] = len(allowableVocab)
+        wordMapping[unknownToken] = len(allowableVocab)
         for word in wordCounts:
             if wordCounts[word] < minWordCount:
                 wordMapping[word] = len(allowableVocab)
         allowableVocab.append(unknownToken)
-        frequencies[unknownToken] = totalRareWords / numWords
+        frequencies[len(allowableVocab)] = totalRareWords / numWords
     vocabularySize = len(allowableVocab)
     print("Vocabulary size:", vocabularySize)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies
@@ -221,7 +221,11 @@ class SkipGramWithNegativeSampling(nn.Module):
     def forward(self, inputs, positiveOutputs, negativeOutputs):
         inputEmbeddings = self.embeddings(inputs)
         positiveOutputEmbeddings = self.outEmbeddings(positiveOutputs)
+        positiveScore = torch.clamp(torch.sum(torch.mul(inputEmbeddings, positiveOutputEmbeddings), dim=1),
+                                    min=-INNER_PRODUCT_CLAMP, max=INNER_PRODUCT_CLAMP)
         negativeOutputEmbeddings = self.outEmbeddings(negativeOutputs)
+        negativeScores = torch.clamp(torch.sum(torch.mul(inputEmbeddings, negativeOutputEmbeddings), dim=1),
+                                     min=-INNER_PRODUCT_CLAMP, max=INNER_PRODUCT_CLAMP)
         return 1
 
 
