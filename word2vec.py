@@ -12,30 +12,30 @@ from pickle import dump, load
 from random import random
 from math import sqrt
 
-CONTEXT_SIZE = 5
-EMBEDDING_DIM = 16
+CONTEXT_SIZE = 2
+EMBEDDING_DIM = 10
 MIN_WORD_COUNT = 10
-TRAIN_PROPORTION = 0.75
+TRAIN_PROPORTION = 0.7
 VALID_PROPORTION = 0.15
 LEARNING_RATE = 1
 MOMENTUM = 0.9
-BATCH_SIZE = 100
-EPOCHS = 20
+BATCH_SIZE = 200
+EPOCHS = 10
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
 SUBSAMPLE_THRESHOLD = 1e-3
 UNIGRAM_DISTRIBUTION_POWER = 0.75
 NUM_NEGATIVE_SAMPLES = 10
 UNKNOWN_TOKEN = '???'
-INNER_PRODUCT_CLAMP = 5.
+INNER_PRODUCT_CLAMP = 4.
 IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
 MIN_REVIEW_LENGTH = 2 * CONTEXT_SIZE + 1
 
 
-def checkAlgorithmImplemented(algorithm):
-    if algorithm.upper() not in IMPLEMENTED_MODELS:
+def checkAlgorithmImplemented(algorithm, implementedModels=IMPLEMENTED_MODELS):
+    if algorithm.upper() not in implementedModels:
         errorMessage = 'Unknown embedding algorithm: ' + str(algorithm) + '; supported options are:'
-        for model in IMPLEMENTED_MODELS:
+        for model in implementedModels:
             errorMessage += ' ' + model
         errorMessage += '.'
         raise Exception(errorMessage)
@@ -130,9 +130,9 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower):
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, distribution
 
 
-def preProcessWords(words, wordMapping, contextSize, algorithm):
+def preProcessWords(words, wordMapping, contextSize, algorithm, minReviewLength=MIN_REVIEW_LENGTH):
     checkAlgorithmImplemented(algorithm)
-    if len(words) < MIN_REVIEW_LENGTH:
+    if len(words) < minReviewLength:
         return []
     dataPoints = []
     for i in range(contextSize, len(words) - contextSize):
@@ -154,13 +154,15 @@ def splitData(rawData, trainProportion, validProportion):
     return trainData, validData, testData
 
 
-def buildDataLoader(rawData, wordMapping, frequencies, subSample=False, batchSize=None,
-                    shuffle=False, contextSize=CONTEXT_SIZE, algorithm='CBOW', threshold=SUBSAMPLE_THRESHOLD):
+def buildDataLoader(rawData, wordMapping, frequencies, subSample=False, batchSize=None, shuffle=False,
+                    contextSize=CONTEXT_SIZE, algorithm='CBOW', threshold=SUBSAMPLE_THRESHOLD,
+                    minReviewLength=MIN_REVIEW_LENGTH):
     checkAlgorithmImplemented(algorithm)
     xs = []
     ys = []
     for review in rawData:
-        dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping, contextSize, algorithm)
+        dataPoints = preProcessWords(preProcess(review['reviewText']).split(), wordMapping, contextSize, algorithm,
+                                     minReviewLength)
         for dataPointX, dataPointY in dataPoints:
             if subSample:
                 if subsampleWord(dataPointY, frequencies, threshold):
@@ -218,7 +220,7 @@ class ContinuousBagOfWords(nn.Module):
 
 
 class SkipGramWithNegativeSampling(nn.Module):
-    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples):
+    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples, innerProductClamp):
         super().__init__()
         self.embeddings = nn.Embedding(vocabSize, embeddingDim)  # These will be the inEmbeddings used in evaluation
         self.outEmbeddings = nn.Embedding(vocabSize, embeddingDim)
@@ -226,24 +228,30 @@ class SkipGramWithNegativeSampling(nn.Module):
         self.embeddingDim = embeddingDim
         self.vocabSize = vocabSize
         self.numNegativeSamples = numNegativeSamples
+        self.innerProductClamp = innerProductClamp
+
+        max_weight = 1 / sqrt(embeddingDim)
+        torch.nn.init.uniform_(self.embeddings.weight, -max_weight, max_weight)
+        torch.nn.init.uniform_(self.outEmbeddings.weight, -max_weight, max_weight)
 
     def forward(self, inputs, positiveOutputs, negativeOutputs):
         inputEmbeddings = self.embeddings(inputs)
         positiveOutputEmbeddings = self.outEmbeddings(positiveOutputs)
         positiveScore = torch.clamp(torch.sum(torch.mul(inputEmbeddings, positiveOutputEmbeddings), dim=1),
-                                    min=-INNER_PRODUCT_CLAMP, max=INNER_PRODUCT_CLAMP)
+                                    min=-self.innerProductClamp, max=self.innerProductClamp)
         positiveScoreLogSigmoid = -F.logsigmoid(positiveScore)
         negativeOutputEmbeddings = self.outEmbeddings(negativeOutputs)
         negativeScores = torch.clamp(torch.sum(torch.mul(inputEmbeddings.unsqueeze(1), negativeOutputEmbeddings),
-                                               dim=2), min=-INNER_PRODUCT_CLAMP, max=INNER_PRODUCT_CLAMP)
+                                               dim=2), min=-self.innerProductClamp, max=self.innerProductClamp)
         negativeScoresLogSigmoid = torch.sum(-F.logsigmoid(-negativeScores), dim=1)
 
         return positiveScoreLogSigmoid + negativeScoresLogSigmoid
 
 
 def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM,
-          contextSize=CONTEXT_SIZE, lr=LEARNING_RATE, momentum=MOMENTUM, numNegativeSamples=NUM_NEGATIVE_SAMPLES,
-          learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR, patience=PATIENCE, algorithm='CBOW'):
+          contextSize=CONTEXT_SIZE, innerProductClamp=INNER_PRODUCT_CLAMP, lr=LEARNING_RATE, momentum=MOMENTUM,
+          numNegativeSamples=NUM_NEGATIVE_SAMPLES, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR,
+          patience=PATIENCE, algorithm='CBOW'):
     checkAlgorithmImplemented(algorithm)
     trainLosses = []
     valLosses = []
@@ -251,7 +259,8 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
         model = ContinuousBagOfWords(vocabSize, embeddingDim, contextSize)
         lossFunction = nn.NLLLoss()
     elif algorithm.upper() == 'SGNS':
-        model = SkipGramWithNegativeSampling(vocabSize, embeddingDim, contextSize, numNegativeSamples)
+        model = SkipGramWithNegativeSampling(vocabSize, embeddingDim, contextSize, numNegativeSamples,
+                                             innerProductClamp)
     optimizer = SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
                                   verbose=True)
@@ -268,7 +277,7 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
                 loss = lossFunction(predictions, yb)
             elif algorithm.upper() == 'SGNS':
                 negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
-                loss = torch.sum(model(yb, xb, negativeSamples))
+                loss = torch.mean(model(yb, xb, negativeSamples))
             loss.backward()
             totalLoss += loss.item()
             optimizer.step()
@@ -286,7 +295,7 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
                 for xb, yb in validDl:
                     negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
                     loss = model(yb, xb, negativeSamples)
-                    validLoss += torch.sum(loss).item()
+                    validLoss += torch.mean(loss).item()
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
         print("Validation loss:", validLoss)
@@ -320,7 +329,7 @@ def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
     elif algorithm.upper() == 'SGNS':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize,
-                     'numNegativeSamples': model.numNegativeSamples}
+                     'numNegativeSamples': model.numNegativeSamples, 'innerProductClamp': model.innerProductClamp}
     outfile = open(modelName + 'ModelData', 'wb')
     dump(modelData, outfile)
     outfile.close()
@@ -348,25 +357,25 @@ def loadModelState(modelName, algorithm='CBOW', unigramDistributionPower=UNIGRAM
         model = ContinuousBagOfWords(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'])
     elif algorithm.upper() == 'SGNS':
         model = SkipGramWithNegativeSampling(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'],
-                                             modelData['numNegativeSamples'])
-    model.load_state_dict(torch.load(modelName + '.pt'))
+                                             modelData['numNegativeSamples'], modelData['innerProductClamp'])
+    model.load_state_dict(torch.load(modelName + algorithm + '.pt'))
     model.eval()
     return wordMapping, reverseWordMapping, vocabulary, frequencies, distribution, model
 
 
-def topKSimilarities(model, word, wordMapping, vocabulary, K=10):
+def topKSimilarities(model, word, wordMapping, vocabulary, K=10, unknownToken=UNKNOWN_TOKEN):
     allSimilarities = {}
     with torch.no_grad():
         wordEmbedding = model.embeddings(torch.tensor(wordMapping[word], dtype=torch.long))
         for otherWord in vocabulary:
-            if otherWord == UNKNOWN_TOKEN:
+            if otherWord == unknownToken:
                 continue
             otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(wordEmbedding, otherEmbedding).item()
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K + 1]}
 
 
-def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, K=10):
+def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, K=10, unknownToken=UNKNOWN_TOKEN):
     allSimilarities = {}
     with torch.no_grad():
         word1Embedding = model.embeddings(torch.tensor(wordMapping[word1], dtype=torch.long))
@@ -374,7 +383,7 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
         word3Embedding = model.embeddings(torch.tensor(wordMapping[word3], dtype=torch.long))
         diff = word1Embedding - word2Embedding + word3Embedding
         for otherWord in vocabulary:
-            if otherWord == UNKNOWN_TOKEN:
+            if otherWord == unknownToken:
                 continue
             otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(diff, otherEmbedding).item()
@@ -392,7 +401,7 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
             for xb, yb in testDl:
                 negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
                 loss = model(yb, xb, negativeSamples)
-                testLoss += torch.sum(loss).item()
+                testLoss += torch.mean(loss).item()
         testLoss = testLoss / len(testDl)
     return testLoss
 
@@ -400,13 +409,13 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
 # Example usage:
 
 algorithmType = 'SGNS'
+name = 'instrumentsSmallHypers'
 wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
 trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
                      algorithm=algorithmType)
-# print(finalEvaluation(trainedModel, testDataLoader))
-# saveModelState(trainedModel, 'groceriesCBOWSubSample', wordIndex, reverseWordIndex, vocab, wordFrequencies,
-#               algorithm='CBOW')
-# wordIndex, reverseWordIndex, vocab, wordFrequencies, loadedModel = loadModelState('groceriesCBOWSubSample',
-#                                                                                   algorithm='CBOW')
-# print(topKSimilarities(loadedModel, 'apple', wordIndex, vocab))
+# print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
+# saveModelState(trainedModel, name, wordIndex, reverseWordIndex, vocab, wordFrequencies, algorithm=algorithmType)
+# wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
+#                                                                                                      algorithm=algorithmType)
+# print(topKSimilarities(loadedModel, 'guitar', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
