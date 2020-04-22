@@ -381,11 +381,17 @@ def loadModelState(modelName, algorithm='CBOW', unigramDistributionPower=UNIGRAM
 def topKSimilarities(model, word, wordMapping, vocabulary, K=10, unknownToken=UNKNOWN_TOKEN):
     allSimilarities = {}
     with torch.no_grad():
-        wordEmbedding = model.embeddings(torch.tensor(wordMapping[word], dtype=torch.long))
+        wordTensor = torch.tensor(wordMapping[word], dtype=torch.long)
+        if CUDA:
+            wordTensor = wordTensor.to('cuda')
+        wordEmbedding = model.embeddings(wordTensor)
         for otherWord in vocabulary:
             if otherWord == unknownToken:
                 continue
-            otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
+            otherWordTensor = torch.tensor(wordMapping[otherWord], dtype=torch.long)
+            if CUDA:
+                otherWordTensor = otherWordTensor.to('cuda')
+            otherEmbedding = model.embeddings(otherWordTensor)
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(wordEmbedding, otherEmbedding).item()
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K + 1]}
 
@@ -393,14 +399,24 @@ def topKSimilarities(model, word, wordMapping, vocabulary, K=10, unknownToken=UN
 def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, K=10, unknownToken=UNKNOWN_TOKEN):
     allSimilarities = {}
     with torch.no_grad():
-        word1Embedding = model.embeddings(torch.tensor(wordMapping[word1], dtype=torch.long))
-        word2Embedding = model.embeddings(torch.tensor(wordMapping[word2], dtype=torch.long))
-        word3Embedding = model.embeddings(torch.tensor(wordMapping[word3], dtype=torch.long))
+        word1Tensor = torch.tensor(wordMapping[word1], dtype=torch.long)
+        word2Tensor = torch.tensor(wordMapping[word2], dtype=torch.long)
+        word3Tensor = torch.tensor(wordMapping[word3], dtype=torch.long)
+        if CUDA:
+            word1Tensor = word1Tensor.to('cuda')
+            word2Tensor = word2Tensor.to('cuda')
+            word3Tensor = word3Tensor.to('cuda')
+        word1Embedding = model.embeddings(word1Tensor)
+        word2Embedding = model.embeddings(word2Tensor)
+        word3Embedding = model.embeddings(word3Tensor)
         diff = word1Embedding - word2Embedding + word3Embedding
         for otherWord in vocabulary:
             if otherWord == unknownToken:
                 continue
-            otherEmbedding = model.embeddings(torch.tensor(wordMapping[otherWord], dtype=torch.long))
+            otherWordTensor = torch.tensor(wordMapping[otherWord], dtype=torch.long)
+            if CUDA:
+                otherWordTensor = otherWordTensor.to('cuda')
+            otherEmbedding = model.embeddings(otherWordTensor)
             allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(diff, otherEmbedding).item()
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
 
@@ -415,7 +431,7 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
                 xb = xb.to('cuda')
                 yb = yb.to('cuda')
             if algorithm.upper() == 'CBOW':
-                testLoss += lossFunction(model(xb), yb)
+                testLoss += lossFunction(model(xb), yb).item()
             elif algorithm.upper() == 'SGNS':
                 negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
                 if CUDA:
