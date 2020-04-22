@@ -12,8 +12,8 @@ from pickle import dump, load
 from random import random
 from math import sqrt
 
-CONTEXT_SIZE = 2
-EMBEDDING_DIM = 10
+CONTEXT_SIZE = 3
+EMBEDDING_DIM = 16
 MIN_WORD_COUNT = 10
 TRAIN_PROPORTION = 0.7
 VALID_PROPORTION = 0.15
@@ -30,6 +30,7 @@ UNKNOWN_TOKEN = '???'
 INNER_PRODUCT_CLAMP = 4.
 IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
 MIN_REVIEW_LENGTH = 2 * CONTEXT_SIZE + 1
+CUDA = torch.cuda.is_available()
 
 
 def checkAlgorithmImplemented(algorithm, implementedModels=IMPLEMENTED_MODELS):
@@ -253,6 +254,7 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
           numNegativeSamples=NUM_NEGATIVE_SAMPLES, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR,
           patience=PATIENCE, algorithm='CBOW'):
     checkAlgorithmImplemented(algorithm)
+    print("Training", algorithm)
     trainLosses = []
     valLosses = []
     if algorithm.upper() == 'CBOW':
@@ -261,6 +263,8 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
     elif algorithm.upper() == 'SGNS':
         model = SkipGramWithNegativeSampling(vocabSize, embeddingDim, contextSize, numNegativeSamples,
                                              innerProductClamp)
+    if CUDA:
+        model.cuda()
     optimizer = SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
                                   verbose=True)
@@ -272,11 +276,16 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
         model.train()
         totalLoss = 0
         for xb, yb in trainDl:
+            if CUDA:
+                xb = xb.to('cuda')
+                yb = yb.to('cuda')
             if algorithm.upper() == 'CBOW':
                 predictions = model(xb)
                 loss = lossFunction(predictions, yb)
             elif algorithm.upper() == 'SGNS':
                 negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
+                if CUDA:
+                    negativeSamples = negativeSamples.to('cuda')
                 loss = torch.mean(model(yb, xb, negativeSamples))
             loss.backward()
             totalLoss += loss.item()
@@ -288,12 +297,17 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
 
         model.eval()
         with torch.no_grad():
-            if algorithm.upper() == 'CBOW':
-                validLoss = sum(lossFunction(model(xb), yb) for xb, yb in validDl).item()
-            elif algorithm.upper() == 'SGNS':
-                validLoss = 0
-                for xb, yb in validDl:
+            validLoss = 0
+            for xb, yb in validDl:
+                if CUDA:
+                    xb = xb.to('cuda')
+                    yb = yb.to('cuda')
+                if algorithm.upper() == 'CBOW':
+                    validLoss += lossFunction(model(xb), yb)
+                elif algorithm.upper() == 'SGNS':
                     negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
+                    if CUDA:
+                        negativeSamples = negativeSamples.to('cuda')
                     loss = model(yb, xb, negativeSamples)
                     validLoss += torch.mean(loss).item()
         validLoss = validLoss / len(validDl)
@@ -333,6 +347,7 @@ def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary
     outfile = open(modelName + 'ModelData', 'wb')
     dump(modelData, outfile)
     outfile.close()
+    return
 
 
 def loadModelState(modelName, algorithm='CBOW', unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
@@ -394,12 +409,17 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
                     numNegativeSamples=NUM_NEGATIVE_SAMPLES):
     checkAlgorithmImplemented(algorithm)
     with torch.no_grad():
-        if algorithm.upper() == 'CBOW':
-            testLoss = sum(lossFunction(model(xb), yb).item() for xb, yb in testDl)
-        elif algorithm.upper() == 'SGNS':
-            testLoss = 0
-            for xb, yb in testDl:
+        testLoss = 0
+        for xb, yb in testDl:
+            if CUDA:
+                xb = xb.to('cuda')
+                yb = yb.to('cuda')
+            if algorithm.upper() == 'CBOW':
+                testLoss += lossFunction(model(xb), yb)
+            elif algorithm.upper() == 'SGNS':
                 negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
+                if CUDA:
+                    negativeSamples = negativeSamples.to('cuda')
                 loss = model(yb, xb, negativeSamples)
                 testLoss += torch.mean(loss).item()
         testLoss = testLoss / len(testDl)
@@ -409,13 +429,13 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
 # Example usage:
 
 algorithmType = 'SGNS'
-name = 'instrumentsSmallHypers'
-wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
-trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
-                     algorithm=algorithmType)
+name = 'instrumentsMediumHypers'
+# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
+# trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
+#                      algorithm=algorithmType)
 # print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
 # saveModelState(trainedModel, name, wordIndex, reverseWordIndex, vocab, wordFrequencies, algorithm=algorithmType)
-# wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
-#                                                                                                      algorithm=algorithmType)
+wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
+                                                                                                      algorithm=algorithmType)
 # print(topKSimilarities(loadedModel, 'guitar', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
