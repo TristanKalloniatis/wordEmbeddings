@@ -303,7 +303,7 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
                     xb = xb.to('cuda')
                     yb = yb.to('cuda')
                 if algorithm.upper() == 'CBOW':
-                    validLoss += lossFunction(model(xb), yb)
+                    validLoss += lossFunction(model(xb), yb).item()
                 elif algorithm.upper() == 'SGNS':
                     negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
                     if CUDA:
