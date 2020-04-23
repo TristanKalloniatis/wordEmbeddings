@@ -12,15 +12,15 @@ from pickle import dump, load
 from random import random
 from math import sqrt
 
-CONTEXT_SIZE = 3
-EMBEDDING_DIM = 16
+CONTEXT_SIZE = 2
+EMBEDDING_DIM = 10
 MIN_WORD_COUNT = 10
 TRAIN_PROPORTION = 0.7
 VALID_PROPORTION = 0.15
 LEARNING_RATE = 1
 MOMENTUM = 0.9
 BATCH_SIZE = 200
-EPOCHS = 10
+EPOCHS = 1
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
 SUBSAMPLE_THRESHOLD = 1e-3
@@ -52,24 +52,22 @@ def subsampleProbabilityDiscard(wordFrequency, threshold):
     return rawResult
 
 
-def subsampleWord(indexOfWord, frequencies, threshold):
+def subsampleWord(wordFrequency, threshold):
     if threshold is not None:
-        return random() < subsampleProbabilityDiscard(frequencies[indexOfWord], threshold)
+        return random() < subsampleProbabilityDiscard(wordFrequency, threshold)
     else:
         return False
 
 
-def noiseDistribution(frequencies, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
-    adjustedFrequencies = {indexOfWord: frequencies[indexOfWord] ** unigramDistributionPower
-                           for indexOfWord in frequencies}
-    normalisation = sum(adjustedFrequencies[indexOfWord] for indexOfWord in adjustedFrequencies)
-    return {indexOfWord: adjustedFrequencies[indexOfWord] / normalisation
-            for indexOfWord in adjustedFrequencies}
+def noiseDistribution(frequencies, unigramDistributionPower):
+    adjustedFrequencies = [frequency ** unigramDistributionPower for frequency in frequencies]
+    normalisation = sum(adjustedFrequencies)
+    return [adjustedFrequency / normalisation for adjustedFrequency in adjustedFrequencies]
 
 
 def produceNegativeSamples(distribution, numNegativeSamples, batchSize):
-    distributions = [list(distribution) for _ in range(batchSize)]
-    return torch.tensor(list(WeightedRandomSampler(distributions, num_samples=numNegativeSamples, replacement=False)))
+    distributions = torch.tensor(distribution, dtype=torch.float).unsqueeze(0).expand(batchSize, len(distribution))
+    return torch.multinomial(distributions, num_samples=numNegativeSamples, replacement=False)
 
 
 def getData(filePath):
@@ -116,10 +114,10 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower):
     wordMapping = {word: i for i, word in enumerate(allowableVocab)}
     reverseWordMapping = {i: word for word, i in wordMapping.items()}
     numWords = float(sum(wordCounts[word] for word in wordCounts))
-    frequencies = {wordMapping[word]: wordCounts[word] / numWords for word in allowableVocab}
+    frequencies = [wordCounts[word] / numWords for word in allowableVocab]
     if totalRareWords > 0:
         reverseWordMapping[len(allowableVocab)] = unknownToken
-        frequencies[len(allowableVocab)] = totalRareWords / numWords
+        frequencies.append(totalRareWords / numWords)
         wordMapping[unknownToken] = len(allowableVocab)
         for word in wordCounts:
             if wordCounts[word] < minWordCount:
@@ -166,7 +164,7 @@ def buildDataLoader(rawData, wordMapping, frequencies, subSample=False, batchSiz
                                      minReviewLength)
         for dataPointX, dataPointY in dataPoints:
             if subSample:
-                if subsampleWord(dataPointY, frequencies, threshold):
+                if subsampleWord(frequencies[dataPointY], threshold):
                     continue
             xs.append(dataPointX)
             ys.append(dataPointY)
@@ -446,12 +444,12 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
 
 algorithmType = 'SGNS'
 name = 'instrumentsMediumHypers'
-# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
-# trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
-#                      algorithm=algorithmType)
+wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
+trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
+                     algorithm=algorithmType)
 # print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
-# saveModelState(trainedModel, name, wordIndex, reverseWordIndex, vocab, wordFrequencies, algorithm=algorithmType)
-wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
-                                                                                                      algorithm=algorithmType)
+saveModelState(trainedModel, name, wordIndex, reverseWordIndex, vocab, wordFrequencies, algorithm=algorithmType)
+# wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
+#                                                                                                       algorithm=algorithmType)
 # print(topKSimilarities(loadedModel, 'guitar', wordIndex, vocab))
 # print(topKSimilaritiesAnalogy(loadedModel, 'buying', 'buy', 'sell', wordIndex, vocab))
