@@ -20,7 +20,8 @@ VALID_PROPORTION = 0.15
 LEARNING_RATE = 1
 MOMENTUM = 0.9
 BATCH_SIZE = 200
-EPOCHS = 1
+BATCHES_FOR_LOGGING = 1000
+EPOCHS = 10
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
 SUBSAMPLE_THRESHOLD = 1e-3
@@ -116,6 +117,7 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower):
     numWords = float(sum(wordCounts[word] for word in wordCounts))
     frequencies = [wordCounts[word] / numWords for word in allowableVocab]
     if totalRareWords > 0:
+        print("Words exist with total count less than", minWordCount, "which will be replaced with", unknownToken)
         reverseWordMapping[len(allowableVocab)] = unknownToken
         frequencies.append(totalRareWords / numWords)
         wordMapping[unknownToken] = len(allowableVocab)
@@ -247,12 +249,14 @@ class SkipGramWithNegativeSampling(nn.Module):
         return positiveScoreLogSigmoid + negativeScoresLogSigmoid
 
 
-def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM,
+def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM,
           contextSize=CONTEXT_SIZE, innerProductClamp=INNER_PRODUCT_CLAMP, lr=LEARNING_RATE, momentum=MOMENTUM,
           numNegativeSamples=NUM_NEGATIVE_SAMPLES, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR,
           patience=PATIENCE, algorithm='CBOW'):
     checkAlgorithmImplemented(algorithm)
-    print("Training", algorithm)
+    print("Training", algorithm, "for", epochs, "epochs. Context size is", contextSize, ", embedding dimension is",
+          embeddingDim, ", initial learning rate is", lr, "with a decay factor of", learningRateDecayFactor, "after",
+          patience, "epochs without progress.")
     trainLosses = []
     valLosses = []
     if algorithm.upper() == 'CBOW':
@@ -273,6 +277,7 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
 
         model.train()
         totalLoss = 0
+        numBatchesProcessed = 0
         for xb, yb in trainDl:
             if CUDA:
                 xb = xb.to('cuda')
@@ -289,6 +294,9 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
             totalLoss += loss.item()
             optimizer.step()
             optimizer.zero_grad()
+            numBatchesProcessed += 1
+            if numBatchesProcessed % BATCHES_FOR_LOGGING == 0:
+                print("Processed", numBatchesProcessed, "batches out of", len(trainDl), "(training)")
         trainLoss = totalLoss / len(trainDl)
         print("Training loss:", trainLoss)
         trainLosses.append(trainLoss)
@@ -296,6 +304,7 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
         model.eval()
         with torch.no_grad():
             validLoss = 0
+            numBatchesProcessed = 0
             for xb, yb in validDl:
                 if CUDA:
                     xb = xb.to('cuda')
@@ -308,6 +317,9 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
                         negativeSamples = negativeSamples.to('cuda')
                     loss = model(yb, xb, negativeSamples)
                     validLoss += torch.mean(loss).item()
+                numBatchesProcessed += 1
+                if numBatchesProcessed % BATCHES_FOR_LOGGING == 0:
+                    print("Processed", numBatchesProcessed, "batches out of", len(validDl), "(validation)")
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
         print("Validation loss:", validLoss)
@@ -316,8 +328,17 @@ def train(trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddi
         print("Took:", seconds)
         scheduler.step(validLoss)
 
-    plt.plot(trainLosses, 'go--', linewidth=2, markersize=12)
-    plt.plot(valLosses, 'bo--', linewidth=2, markersize=12)
+        torch.save(model.state_dict(), modelName + str(epoch) + 'intermediate' + str(embeddingDim) + algorithm +
+                   str(contextSize) + '.pt')
+
+    fig, ax = plt.subplots()
+    ax.plot(range(epochs), trainLosses, label="Training")
+    ax.plot(range(epochs), valLosses, label="Validation")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Loss")
+    ax.set_title("Learning curve for model", modelName)
+    ax.legend()
+    plt.savefig(modelName + 'learningCurve' + str(embeddingDim) + algorithm + str(contextSize) + '.png')
 
     return model
 
@@ -345,6 +366,7 @@ def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary
     outfile = open(modelName + 'ModelData', 'wb')
     dump(modelData, outfile)
     outfile.close()
+    print("Saved model", modelName)
     return
 
 
@@ -372,30 +394,35 @@ def loadModelState(modelName, algorithm='CBOW', unigramDistributionPower=UNIGRAM
         model = SkipGramWithNegativeSampling(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'],
                                              modelData['numNegativeSamples'], modelData['innerProductClamp'])
     model.load_state_dict(torch.load(modelName + algorithm + '.pt'))
+    print("Loaded model", modelName)
     model.eval()
     return wordMapping, reverseWordMapping, vocabulary, frequencies, distribution, model
 
 
 def topKSimilarities(model, word, wordMapping, vocabulary, K=10, unknownToken=UNKNOWN_TOKEN):
-    allSimilarities = {}
     with torch.no_grad():
         wordTensor = torch.tensor(wordMapping[word], dtype=torch.long)
         if CUDA:
             wordTensor = wordTensor.to('cuda')
         wordEmbedding = model.embeddings(wordTensor)
+    return topKSimilaritiesToEmbedding(model, wordEmbedding, wordMapping, vocabulary, [word], K, unknownToken)
+
+
+def topKSimilaritiesToEmbedding(model, embedding, wordMapping, vocabulary, ignoreList, K, unknownToken=UNKNOWN_TOKEN):
+    allSimilarities = {}
+    with torch.no_grad():
         for otherWord in vocabulary:
-            if otherWord == unknownToken:
+            if otherWord == unknownToken or otherWord in ignoreList:
                 continue
             otherWordTensor = torch.tensor(wordMapping[otherWord], dtype=torch.long)
             if CUDA:
                 otherWordTensor = otherWordTensor.to('cuda')
             otherEmbedding = model.embeddings(otherWordTensor)
-            allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(wordEmbedding, otherEmbedding).item()
-    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[1:K + 1]}
+            allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(embedding, otherEmbedding).item()
+    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
 
 
 def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, K=10, unknownToken=UNKNOWN_TOKEN):
-    allSimilarities = {}
     with torch.no_grad():
         word1Tensor = torch.tensor(wordMapping[word1], dtype=torch.long)
         word2Tensor = torch.tensor(wordMapping[word2], dtype=torch.long)
@@ -408,15 +435,7 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
         word2Embedding = model.embeddings(word2Tensor)
         word3Embedding = model.embeddings(word3Tensor)
         diff = word1Embedding - word2Embedding + word3Embedding
-        for otherWord in vocabulary:
-            if otherWord == unknownToken:
-                continue
-            otherWordTensor = torch.tensor(wordMapping[otherWord], dtype=torch.long)
-            if CUDA:
-                otherWordTensor = otherWordTensor.to('cuda')
-            otherEmbedding = model.embeddings(otherWordTensor)
-            allSimilarities[otherWord] = nn.CosineSimilarity(dim=0)(diff, otherEmbedding).item()
-    return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
+    return topKSimilaritiesToEmbedding(model, diff, wordMapping, vocabulary, [word1, word2, word3], K, unknownToken)
 
 
 def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(), algorithm='CBOW',
@@ -424,6 +443,7 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
     checkAlgorithmImplemented(algorithm)
     with torch.no_grad():
         testLoss = 0
+        numBatchesProcessed = 0
         for xb, yb in testDl:
             if CUDA:
                 xb = xb.to('cuda')
@@ -436,18 +456,21 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
                     negativeSamples = negativeSamples.to('cuda')
                 loss = model(yb, xb, negativeSamples)
                 testLoss += torch.mean(loss).item()
+            numBatchesProcessed += 1
+            if numBatchesProcessed % BATCHES_FOR_LOGGING == 0:
+                print("Processed", numBatchesProcessed, "batches out of", len(testDl), "(testing)")
         testLoss = testLoss / len(testDl)
     return testLoss
 
 
 # Example usage:
 
-algorithmType = 'SGNS'
-name = 'instrumentsMediumHypers'
+algorithmType = 'CBOW'
+name = 'instrumentsLowHypers'
 wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
-trainedModel = train(trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
+trainedModel = train(name, trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
                      algorithm=algorithmType)
-# print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
+print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
 saveModelState(trainedModel, name, wordIndex, reverseWordIndex, vocab, wordFrequencies, algorithm=algorithmType)
 # wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
 #                                                                                                       algorithm=algorithmType)
