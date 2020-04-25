@@ -1,3 +1,4 @@
+from argparse import ArgumentParser
 import gzip
 from json import loads
 import torch
@@ -19,7 +20,7 @@ TRAIN_PROPORTION = 0.7
 VALID_PROPORTION = 0.15
 LEARNING_RATE = 1
 MOMENTUM = 0.9
-BATCH_SIZE = 200
+BATCH_SIZE = 1000
 BATCHES_FOR_LOGGING = 1000
 EPOCHS = 10
 LEARNING_RATE_DECAY_FACTOR = 0.1
@@ -29,8 +30,41 @@ UNIGRAM_DISTRIBUTION_POWER = 0.75
 NUM_NEGATIVE_SAMPLES = 10
 UNKNOWN_TOKEN = '???'
 INNER_PRODUCT_CLAMP = 4.
+
+parser = ArgumentParser(description='Options for word2vec')
+parser.add_argument("--contextSize", type=int, default=CONTEXT_SIZE, help="Context size for training")
+parser.add_argument("--embeddingDimension", type=int, default=EMBEDDING_DIM, help="Internal embedding dimension")
+parser.add_argument("--minWordCount", type=int, default=MIN_WORD_COUNT,
+                    help="Minimum word count to not be mapped to unknown word")
+parser.add_argument("--trainProportion", type=float, default=TRAIN_PROPORTION,
+                    help="Proportion of reviews to use in training set")
+parser.add_argument("--validProportion", type=float, default=VALID_PROPORTION,
+                    help="Proportion of reviews to use in validation set")
+parser.add_argument("--learningRate", type=float, default=LEARNING_RATE, help="Initial learning rate to use")
+parser.add_argument("--momentum", type=float, default=MOMENTUM, help="Momentum to use in optimiser")
+parser.add_argument("--batchSize", type=int, default=BATCH_SIZE,  help="Batch size for training")
+parser.add_argument("--batchesForLogging", type=int, default=BATCHES_FOR_LOGGING,
+                    help="After how many batches processed should the progress be logged")
+parser.add_argument("--epochs", type=int, default=EPOCHS, help="How many epochs to train for")
+parser.add_argument("--learningRateDecayFactor", type=float, default=LEARNING_RATE_DECAY_FACTOR,
+                    help="How much to reduce the learning rate when plateauing")
+parser.add_argument("--patience", type=int, default=PATIENCE,
+                    help="How many epochs without progress until plateau is declared")
+parser.add_argument("--subsampleThreshold", type=float, default=SUBSAMPLE_THRESHOLD,
+                    help="Threshold frequency of words to begin subsampling")
+parser.add_argument("--unigramDistributionPower", type=float, default=UNIGRAM_DISTRIBUTION_POWER,
+                    help="Adjustment to unigram distribution to make in selecting negative samples")
+parser.add_argument("--numNegativeSamples", type=int, default=NUM_NEGATIVE_SAMPLES,
+                    help="Number of negative samples to use")
+parser.add_argument("--innerProductClamp", type=float, default=INNER_PRODUCT_CLAMP,
+                    help="How much to clamp the internal inner products")
+parser.add_argument("--algorithmType", type=str, default='CBOW', help="Which algorithm to use")
+parser.add_argument("--name", type=str, required=True, help="Name for the model")
+
+args = parser.parse_args()
+
 IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
-MIN_REVIEW_LENGTH = 2 * CONTEXT_SIZE + 1
+MIN_REVIEW_LENGTH = 2 * args.contextSize + 1
 CUDA = torch.cuda.is_available()
 
 
@@ -131,7 +165,7 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower):
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, distribution
 
 
-def preProcessWords(words, wordMapping, contextSize, algorithm, minReviewLength=MIN_REVIEW_LENGTH):
+def preProcessWords(words, wordMapping, contextSize, algorithm, minReviewLength):
     checkAlgorithmImplemented(algorithm)
     if len(words) < minReviewLength:
         return []
@@ -155,9 +189,8 @@ def splitData(rawData, trainProportion, validProportion):
     return trainData, validData, testData
 
 
-def buildDataLoader(rawData, wordMapping, frequencies, subSample=False, batchSize=None, shuffle=False,
-                    contextSize=CONTEXT_SIZE, algorithm='CBOW', threshold=SUBSAMPLE_THRESHOLD,
-                    minReviewLength=MIN_REVIEW_LENGTH):
+def buildDataLoader(rawData, wordMapping, frequencies, contextSize, algorithm, threshold,
+                    minReviewLength=MIN_REVIEW_LENGTH, subSample=False, batchSize=None, shuffle=False):
     checkAlgorithmImplemented(algorithm)
     xs = []
     ys = []
@@ -180,9 +213,10 @@ def buildDataLoader(rawData, wordMapping, frequencies, subSample=False, batchSiz
     return dl
 
 
-def setup(filePath, batchSize=BATCH_SIZE, contextSize=CONTEXT_SIZE, minWordCount=MIN_WORD_COUNT,
-          unknownToken=UNKNOWN_TOKEN, trainProportion=TRAIN_PROPORTION, validProportion=VALID_PROPORTION,
-          algorithm='CBOW', threshold=SUBSAMPLE_THRESHOLD, unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
+def setup(filePath, batchSize=args.batchSize, contextSize=args.contextSize, minWordCount=args.minWordCount,
+          unknownToken=UNKNOWN_TOKEN, trainProportion=args.trainProportion, validProportion=args.validProportion,
+          algorithm=args.algorithmType, threshold=args.subsampleThreshold,
+          unigramDistributionPower=args.unigramDistributionPower):
     checkAlgorithmImplemented(algorithm)
     data = getData(filePath)
     wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, distribution = buildVocab(data,
@@ -191,27 +225,27 @@ def setup(filePath, batchSize=BATCH_SIZE, contextSize=CONTEXT_SIZE, minWordCount
                                                                                                        unigramDistributionPower)
     trainData, validData, testData = splitData(data, trainProportion, validProportion)
     print("Train data")
-    trainDl = buildDataLoader(trainData, wordMapping, frequencies, subSample=True,
-                              batchSize=batchSize, shuffle=True, contextSize=contextSize, algorithm=algorithm,
-                              threshold=threshold)
+    trainDl = buildDataLoader(trainData, wordMapping, frequencies, contextSize, algorithm, threshold, subSample=True,
+                              batchSize=batchSize, shuffle=True)
     print("Validation data")
-    validDl = buildDataLoader(validData, wordMapping, frequencies, subSample=True,
-                              batchSize=2 * batchSize, shuffle=False, contextSize=contextSize, algorithm=algorithm,
-                              threshold=threshold)
+    validDl = buildDataLoader(validData, wordMapping, frequencies, contextSize, algorithm, threshold, subSample=True,
+                              batchSize=2 * batchSize, shuffle=False)
     print("Test data")
-    testDl = buildDataLoader(testData, wordMapping, frequencies, subSample=False,
-                             batchSize=2 * batchSize, shuffle=False, contextSize=contextSize, algorithm=algorithm)
+    testDl = buildDataLoader(testData, wordMapping, frequencies, contextSize, algorithm, threshold, subSample=False,
+                             batchSize=2 * batchSize, shuffle=False)
     return wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, distribution, trainDl, validDl, testDl
 
 
 class ContinuousBagOfWords(nn.Module):
-    def __init__(self, vocabSize, embeddingDim, contextSize):
+    def __init__(self, vocabSize, embeddingDim, contextSize, name):
         super().__init__()
         self.embeddings = nn.Embedding(vocabSize, embeddingDim)
         self.linear = nn.Linear(embeddingDim, vocabSize)
         self.contextSize = contextSize
         self.embeddingDim = embeddingDim
         self.vocabSize = vocabSize
+        self.name = name
+        self.algorithmType = 'CBOW'
 
     def forward(self, inputs):
         embeds = self.embeddings(inputs)
@@ -221,7 +255,7 @@ class ContinuousBagOfWords(nn.Module):
 
 
 class SkipGramWithNegativeSampling(nn.Module):
-    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples, innerProductClamp):
+    def __init__(self, vocabSize, embeddingDim, contextSize, numNegativeSamples, innerProductClamp, name):
         super().__init__()
         self.embeddings = nn.Embedding(vocabSize, embeddingDim)  # These will be the inEmbeddings used in evaluation
         self.outEmbeddings = nn.Embedding(vocabSize, embeddingDim)
@@ -230,6 +264,8 @@ class SkipGramWithNegativeSampling(nn.Module):
         self.vocabSize = vocabSize
         self.numNegativeSamples = numNegativeSamples
         self.innerProductClamp = innerProductClamp
+        self.name = name
+        self.algorithmType = 'SGNS'
 
         max_weight = 1 / sqrt(embeddingDim)
         torch.nn.init.uniform_(self.embeddings.weight, -max_weight, max_weight)
@@ -249,10 +285,10 @@ class SkipGramWithNegativeSampling(nn.Module):
         return positiveScoreLogSigmoid + negativeScoresLogSigmoid
 
 
-def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=EPOCHS, embeddingDim=EMBEDDING_DIM,
-          contextSize=CONTEXT_SIZE, innerProductClamp=INNER_PRODUCT_CLAMP, lr=LEARNING_RATE, momentum=MOMENTUM,
-          numNegativeSamples=NUM_NEGATIVE_SAMPLES, learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR,
-          patience=PATIENCE, algorithm='CBOW'):
+def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=args.epochs,
+          embeddingDim=args.embeddingDimension, contextSize=args.contextSize, innerProductClamp=args.innerProductClamp,
+          lr=args.learningRate, momentum=args.momentum, numNegativeSamples=args.numNegativeSamples,
+          learningRateDecayFactor=args.learningRateDecayFactor, patience=args.patience, algorithm=args.algorithmType):
     checkAlgorithmImplemented(algorithm)
     print("Training", algorithm, "for", epochs, "epochs. Context size is", contextSize, ", embedding dimension is",
           embeddingDim, ", initial learning rate is", lr, "with a decay factor of", learningRateDecayFactor, "after",
@@ -260,11 +296,11 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=EPOC
     trainLosses = []
     valLosses = []
     if algorithm.upper() == 'CBOW':
-        model = ContinuousBagOfWords(vocabSize, embeddingDim, contextSize)
+        model = ContinuousBagOfWords(vocabSize, embeddingDim, contextSize, modelName)
         lossFunction = nn.NLLLoss()
     elif algorithm.upper() == 'SGNS':
         model = SkipGramWithNegativeSampling(vocabSize, embeddingDim, contextSize, numNegativeSamples,
-                                             innerProductClamp)
+                                             innerProductClamp, modelName)
     if CUDA:
         model.cuda()
     optimizer = SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
@@ -295,7 +331,7 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=EPOC
             optimizer.step()
             optimizer.zero_grad()
             numBatchesProcessed += 1
-            if numBatchesProcessed % BATCHES_FOR_LOGGING == 0:
+            if numBatchesProcessed % args.batchesForLogging == 0:
                 print("Processed", numBatchesProcessed, "batches out of", len(trainDl), "(training)")
         trainLoss = totalLoss / len(trainDl)
         print("Training loss:", trainLoss)
@@ -318,7 +354,7 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=EPOC
                     loss = model(yb, xb, negativeSamples)
                     validLoss += torch.mean(loss).item()
                 numBatchesProcessed += 1
-                if numBatchesProcessed % BATCHES_FOR_LOGGING == 0:
+                if numBatchesProcessed % args.batchesForLogging == 0:
                     print("Processed", numBatchesProcessed, "batches out of", len(validDl), "(validation)")
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
@@ -343,34 +379,33 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=EPOC
     return model
 
 
-def saveModelState(model, modelName, wordMapping, reverseWordMapping, vocabulary, frequencies, algorithm='CBOW'):
-    checkAlgorithmImplemented(algorithm)
-    torch.save(model.state_dict(), modelName + algorithm + '.pt')
-    outfile = open(modelName + 'WordMapping', 'wb')
+def saveModelState(model, wordMapping, reverseWordMapping, vocabulary, frequencies):
+    torch.save(model.state_dict(), model.name + model.algorithmType + '.pt')
+    outfile = open(model.name + 'WordMapping', 'wb')
     dump(wordMapping, outfile)
     outfile.close()
-    outfile = open(modelName + 'reverseWordMapping', 'wb')
+    outfile = open(model.name + 'reverseWordMapping', 'wb')
     dump(reverseWordMapping, outfile)
     outfile.close()
-    outfile = open(modelName + 'Vocab', 'wb')
+    outfile = open(model.name + 'Vocab', 'wb')
     dump(vocabulary, outfile)
     outfile.close()
-    outfile = open(modelName + 'Frequencies', 'wb')
+    outfile = open(model.name + 'Frequencies', 'wb')
     dump(frequencies, outfile)
     outfile.close()
-    if algorithm.upper() == 'CBOW':
+    if model.algorithmType == 'CBOW':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize}
-    elif algorithm.upper() == 'SGNS':
+    elif model.algorithmType == 'SGNS':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize,
                      'numNegativeSamples': model.numNegativeSamples, 'innerProductClamp': model.innerProductClamp}
-    outfile = open(modelName + 'ModelData', 'wb')
+    outfile = open(model.name + 'ModelData', 'wb')
     dump(modelData, outfile)
     outfile.close()
-    print("Saved model", modelName)
+    print("Saved model", model.name)
     return
 
 
-def loadModelState(modelName, algorithm='CBOW', unigramDistributionPower=UNIGRAM_DISTRIBUTION_POWER):
+def loadModelState(modelName, algorithm=args.algorithmType, unigramDistributionPower=args.unigramDistributionPower):
     checkAlgorithmImplemented(algorithm)
     infile = open(modelName + 'wordMapping', 'rb')
     wordMapping = load(infile)
@@ -389,10 +424,10 @@ def loadModelState(modelName, algorithm='CBOW', unigramDistributionPower=UNIGRAM
     modelData = load(infile)
     infile.close()
     if algorithm.upper() == 'CBOW':
-        model = ContinuousBagOfWords(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'])
+        model = ContinuousBagOfWords(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'], modelName)
     elif algorithm.upper() == 'SGNS':
         model = SkipGramWithNegativeSampling(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'],
-                                             modelData['numNegativeSamples'], modelData['innerProductClamp'])
+                                             modelData['numNegativeSamples'], modelData['innerProductClamp'], modelName)
     model.load_state_dict(torch.load(modelName + algorithm + '.pt'))
     print("Loaded model", modelName)
     model.eval()
@@ -438,9 +473,8 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
     return topKSimilaritiesToEmbedding(model, diff, wordMapping, vocabulary, [word1, word2, word3], K, unknownToken)
 
 
-def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(), algorithm='CBOW',
-                    numNegativeSamples=NUM_NEGATIVE_SAMPLES):
-    checkAlgorithmImplemented(algorithm)
+def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
+                    numNegativeSamples=args.numNegativeSamples):
     with torch.no_grad():
         testLoss = 0
         numBatchesProcessed = 0
@@ -448,16 +482,16 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
             if CUDA:
                 xb = xb.to('cuda')
                 yb = yb.to('cuda')
-            if algorithm.upper() == 'CBOW':
+            if model.algorithmType == 'CBOW':
                 testLoss += lossFunction(model(xb), yb).item()
-            elif algorithm.upper() == 'SGNS':
+            elif model.algorithmType == 'SGNS':
                 negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
                 if CUDA:
                     negativeSamples = negativeSamples.to('cuda')
                 loss = model(yb, xb, negativeSamples)
                 testLoss += torch.mean(loss).item()
             numBatchesProcessed += 1
-            if numBatchesProcessed % BATCHES_FOR_LOGGING == 0:
+            if numBatchesProcessed % args.batchesForLogging == 0:
                 print("Processed", numBatchesProcessed, "batches out of", len(testDl), "(testing)")
         testLoss = testLoss / len(testDl)
     return testLoss
@@ -465,13 +499,11 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
 
 # Example usage:
 
-algorithmType = 'CBOW'
-name = 'instrumentsLowHypers'
-wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
-trainedModel = train(name, trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
-                     algorithm=algorithmType)
-print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
-saveModelState(trainedModel, name, wordIndex, reverseWordIndex, vocab, wordFrequencies, algorithm=algorithmType)
+# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
+# trainedModel = train(args.name, trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
+#                      algorithm=args.algorithmType)
+# print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
+# saveModelState(trainedModel, wordIndex, reverseWordIndex, vocab, wordFrequencies)
 # wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
 #                                                                                                       algorithm=algorithmType)
 # print(topKSimilarities(loadedModel, 'guitar', wordIndex, vocab))
