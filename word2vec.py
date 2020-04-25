@@ -444,7 +444,7 @@ def loadModelState(modelName, algorithm=args.algorithmType, unigramDistributionP
     frequencies = load(infile)
     infile.close()
     distribution = noiseDistribution(frequencies, unigramDistributionPower)
-    infile = open(modelName + args.algorithmType + 'ModelData', 'rb')
+    infile = open(modelName + algorithm + 'ModelData', 'rb')
     modelData = load(infile)
     infile.close()
     if algorithm.upper() == 'CBOW':
