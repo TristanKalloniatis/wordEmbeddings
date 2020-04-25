@@ -1,4 +1,6 @@
 from argparse import ArgumentParser
+import logging
+from sys import stdout
 import gzip
 from json import loads
 import torch
@@ -13,16 +15,16 @@ from pickle import dump, load
 from random import random
 from math import sqrt
 
-CONTEXT_SIZE = 2
-EMBEDDING_DIM = 10
+CONTEXT_SIZE = 3
+EMBEDDING_DIM = 16
 MIN_WORD_COUNT = 10
-TRAIN_PROPORTION = 0.7
+TRAIN_PROPORTION = 0.75
 VALID_PROPORTION = 0.15
 LEARNING_RATE = 1
 MOMENTUM = 0.9
 BATCH_SIZE = 1000
 BATCHES_FOR_LOGGING = 1000
-EPOCHS = 10
+EPOCHS = 20
 LEARNING_RATE_DECAY_FACTOR = 0.1
 PATIENCE = 1
 SUBSAMPLE_THRESHOLD = 1e-3
@@ -66,6 +68,21 @@ args = parser.parse_args()
 IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
 MIN_REVIEW_LENGTH = 2 * args.contextSize + 1
 CUDA = torch.cuda.is_available()
+FULL_NAME = args.name + "CS" + str(args.contextSize) + "ED" + str(args.embeddingDimension) + "MWC" + \
+            str(args.minWordCount) + "TP" + str(args.trainProportion) + "VP" + str(args.validProportion) + "LR" + \
+            str(args.learningRate) + "M" + str(args.momentum) + "BS" + str(args.batchSize) + "E" + str(args.epochs) + \
+            "LRDF" + str(args.learningRateDecayFactor) + "P" + str(args.patience) + "SST" + \
+            str(args.subsampleThreshold) + "UDP" + str(args.unigramDistributionPower) + "NNS" + \
+            str(args.numNegativeSamples) + "IPC" + str(args.innerProductClamp) + args.algorithmType
+
+logger = logging.getLogger()
+logging.basicConfig(level=logging.INFO, stream=stdout)
+if CUDA:
+    logger.info("Cuda is available")
+else:
+    logger.info("Cuda is not available")
+logger.info("[" + str(datetime.now()) + "]: Running " + FULL_NAME)
+logger.addHandler(logging.FileHandler("log" + FULL_NAME + ".txt"))
 
 
 def checkAlgorithmImplemented(algorithm, implementedModels=IMPLEMENTED_MODELS):
@@ -111,7 +128,7 @@ def getData(filePath):
     for line in file:
         rawData.append(loads(line))
     file.close()
-    print("Number of reviews:", len(rawData))
+    logger.info("[" + str(datetime.now()) + "]: Number of reviews: " + str(len(rawData)))
     return rawData
 
 
@@ -133,7 +150,7 @@ def buildWordCounts(rawData):
                 wordCounts[word] += 1
             else:
                 wordCounts[word] = 1
-    print("Number of distinct words:", len(wordCounts))
+    logger.info("[" + str(datetime.now()) + "]: Number of distinct words: " + str(len(wordCounts)))
     return wordCounts
 
 
@@ -151,7 +168,8 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower):
     numWords = float(sum(wordCounts[word] for word in wordCounts))
     frequencies = [wordCounts[word] / numWords for word in allowableVocab]
     if totalRareWords > 0:
-        print("Words exist with total count less than", minWordCount, "which will be replaced with", unknownToken)
+        logger.info("[" + str(datetime.now()) + "]: Words exist with total count less than " + str(minWordCount) +
+                    " which will be replaced with " + unknownToken)
         reverseWordMapping[len(allowableVocab)] = unknownToken
         frequencies.append(totalRareWords / numWords)
         wordMapping[unknownToken] = len(allowableVocab)
@@ -161,7 +179,7 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower):
         allowableVocab.append(unknownToken)
     vocabularySize = len(allowableVocab)
     distribution = noiseDistribution(frequencies, unigramDistributionPower)
-    print("Vocabulary size:", vocabularySize)
+    logger.info("[" + str(datetime.now()) + "]: Vocabulary size: " + str(vocabularySize))
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, distribution
 
 
@@ -203,7 +221,7 @@ def buildDataLoader(rawData, wordMapping, frequencies, contextSize, algorithm, t
                     continue
             xs.append(dataPointX)
             ys.append(dataPointY)
-    print("Size of data:", len(xs))
+    logger.info("[" + str(datetime.now()) + "]: Size of data: " + str(len(xs)))
     xs, ys = map(torch.tensor, (xs, ys))
     ds = TensorDataset(xs, ys)
     if batchSize is not None:
@@ -218,21 +236,24 @@ def setup(filePath, batchSize=args.batchSize, contextSize=args.contextSize, minW
           algorithm=args.algorithmType, threshold=args.subsampleThreshold,
           unigramDistributionPower=args.unigramDistributionPower):
     checkAlgorithmImplemented(algorithm)
+    now = datetime.now()
     data = getData(filePath)
     wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, distribution = buildVocab(data,
                                                                                                        minWordCount,
                                                                                                        unknownToken,
                                                                                                        unigramDistributionPower)
     trainData, validData, testData = splitData(data, trainProportion, validProportion)
-    print("Train data")
+    logger.info("[" + str(datetime.now()) + "]: Train data")
     trainDl = buildDataLoader(trainData, wordMapping, frequencies, contextSize, algorithm, threshold, subSample=True,
                               batchSize=batchSize, shuffle=True)
-    print("Validation data")
+    logger.info("[" + str(datetime.now()) + "]: Validation data")
     validDl = buildDataLoader(validData, wordMapping, frequencies, contextSize, algorithm, threshold, subSample=True,
                               batchSize=2 * batchSize, shuffle=False)
-    print("Test data")
+    logger.info("[" + str(datetime.now()) + "]: Test data")
     testDl = buildDataLoader(testData, wordMapping, frequencies, contextSize, algorithm, threshold, subSample=False,
                              batchSize=2 * batchSize, shuffle=False)
+    seconds = (datetime.now() - now).total_seconds()
+    logger.info("[" + str(datetime.now()) + "]: Setting up took: " + str(seconds) + " seconds")
     return wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, distribution, trainDl, validDl, testDl
 
 
@@ -290,9 +311,10 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=args
           lr=args.learningRate, momentum=args.momentum, numNegativeSamples=args.numNegativeSamples,
           learningRateDecayFactor=args.learningRateDecayFactor, patience=args.patience, algorithm=args.algorithmType):
     checkAlgorithmImplemented(algorithm)
-    print("Training", algorithm, "for", epochs, "epochs. Context size is", contextSize, ", embedding dimension is",
-          embeddingDim, ", initial learning rate is", lr, "with a decay factor of", learningRateDecayFactor, "after",
-          patience, "epochs without progress.")
+    logger.info("[" + str(datetime.now()) + "]: Training " + algorithm + " for " + str(epochs) +
+                " epochs. Context size is " + str(contextSize) + ", embedding dimension is " + str(embeddingDim) +
+                ", initial learning rate is " + str(lr) + " with a decay factor of " + str(learningRateDecayFactor) +
+                " after " + str(patience) + " epochs without progress.")
     trainLosses = []
     valLosses = []
     if algorithm.upper() == 'CBOW':
@@ -308,8 +330,8 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=args
                                   verbose=True)
 
     for epoch in range(epochs):
-        print("Epoch:", epoch)
         now = datetime.now()
+        logger.info("[" + str(datetime.now()) + "]: Epoch: " + str(epoch))
 
         model.train()
         totalLoss = 0
@@ -332,9 +354,10 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=args
             optimizer.zero_grad()
             numBatchesProcessed += 1
             if numBatchesProcessed % args.batchesForLogging == 0:
-                print("Processed", numBatchesProcessed, "batches out of", len(trainDl), "(training)")
+                logger.info("[" + str(datetime.now()) + "]: Processed " + str(numBatchesProcessed) + " batches out of "
+                            + str(len(trainDl)) + " (training)")
         trainLoss = totalLoss / len(trainDl)
-        print("Training loss:", trainLoss)
+        logger.info("[" + str(datetime.now()) + "]: Training loss: " + str(trainLoss))
         trainLosses.append(trainLoss)
 
         model.eval()
@@ -355,13 +378,14 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=args
                     validLoss += torch.mean(loss).item()
                 numBatchesProcessed += 1
                 if numBatchesProcessed % args.batchesForLogging == 0:
-                    print("Processed", numBatchesProcessed, "batches out of", len(validDl), "(validation)")
+                    logger.info("[" + str(datetime.now()) + "]: Processed " + str(numBatchesProcessed) +
+                                " batches out of " + str(len(validDl)) + " (validation)")
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
-        print("Validation loss:", validLoss)
+        logger.info("[" + str(datetime.now()) + "]: Validation loss: " + str(validLoss))
 
         seconds = (datetime.now() - now).total_seconds()
-        print("Took:", seconds)
+        logger.info("[" + str(datetime.now()) + "]: Epoch took: " + str(seconds) + " seconds")
         scheduler.step(validLoss)
 
         torch.save(model.state_dict(), modelName + str(epoch) + 'intermediate' + str(embeddingDim) + algorithm +
@@ -372,7 +396,7 @@ def train(modelName, trainDl, validDl, vocabSize, distribution=None, epochs=args
     ax.plot(range(epochs), valLosses, label="Validation")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    ax.set_title("Learning curve for model", modelName)
+    ax.set_title("Learning curve for model " + str(modelName))
     ax.legend()
     plt.savefig(modelName + 'learningCurve' + str(embeddingDim) + algorithm + str(contextSize) + '.png')
 
@@ -398,10 +422,10 @@ def saveModelState(model, wordMapping, reverseWordMapping, vocabulary, frequenci
     elif model.algorithmType == 'SGNS':
         modelData = {'embeddingDim': model.embeddingDim, 'contextSize': model.contextSize,
                      'numNegativeSamples': model.numNegativeSamples, 'innerProductClamp': model.innerProductClamp}
-    outfile = open(model.name + 'ModelData', 'wb')
+    outfile = open(model.name + model.algorithmType + 'ModelData', 'wb')
     dump(modelData, outfile)
     outfile.close()
-    print("Saved model", model.name)
+    logger.info("[" + str(datetime.now()) + "]: Saved model " + model.name)
     return
 
 
@@ -420,7 +444,7 @@ def loadModelState(modelName, algorithm=args.algorithmType, unigramDistributionP
     frequencies = load(infile)
     infile.close()
     distribution = noiseDistribution(frequencies, unigramDistributionPower)
-    infile = open(modelName + 'ModelData', 'rb')
+    infile = open(modelName + args.algorithmType + 'ModelData', 'rb')
     modelData = load(infile)
     infile.close()
     if algorithm.upper() == 'CBOW':
@@ -429,7 +453,7 @@ def loadModelState(modelName, algorithm=args.algorithmType, unigramDistributionP
         model = SkipGramWithNegativeSampling(len(vocabulary), modelData['embeddingDim'], modelData['contextSize'],
                                              modelData['numNegativeSamples'], modelData['innerProductClamp'], modelName)
     model.load_state_dict(torch.load(modelName + algorithm + '.pt'))
-    print("Loaded model", modelName)
+    logger.info("[" + str(datetime.now()) + "]: Loaded model " + modelName)
     model.eval()
     return wordMapping, reverseWordMapping, vocabulary, frequencies, distribution, model
 
@@ -492,18 +516,19 @@ def finalEvaluation(model, testDl, distribution=None, lossFunction=nn.NLLLoss(),
                 testLoss += torch.mean(loss).item()
             numBatchesProcessed += 1
             if numBatchesProcessed % args.batchesForLogging == 0:
-                print("Processed", numBatchesProcessed, "batches out of", len(testDl), "(testing)")
+                logger.info("[" + str(datetime.now()) + "]: Processed " + str(numBatchesProcessed) + " batches out of "
+                            + str(len(testDl)) + " (testing)")
         testLoss = testLoss / len(testDl)
     return testLoss
 
 
 # Example usage:
 
-# wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Musical_Instruments_5.json.gz', algorithm=algorithmType)
-# trainedModel = train(args.name, trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
-#                      algorithm=args.algorithmType)
+wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', algorithm=args.algorithmType)
+trainedModel = train(args.name, trainDataLoader, validDataLoader, VOCAB_SIZE, distribution=sampleDistribution,
+                     algorithm=args.algorithmType)
 # print(finalEvaluation(trainedModel, testDataLoader, distribution=sampleDistribution, algorithm=algorithmType))
-# saveModelState(trainedModel, wordIndex, reverseWordIndex, vocab, wordFrequencies)
+saveModelState(trainedModel, wordIndex, reverseWordIndex, vocab, wordFrequencies)
 # wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(name,
 #                                                                                                       algorithm=algorithmType)
 # print(topKSimilarities(loadedModel, 'guitar', wordIndex, vocab))
