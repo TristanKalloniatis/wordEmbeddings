@@ -15,7 +15,7 @@ from pickle import dump, load
 from random import random
 from math import sqrt
 
-ALGORITHM_TYPE = 'CBOW'
+ALGORITHM_TYPE = 'SGNS'
 NAME = 'groceries'
 CONTEXT_SIZE = 3
 EMBEDDING_DIM = 16
@@ -39,49 +39,49 @@ WORD1_FOR_ANALOGY, WORD2_FOR_ANALOGY, WORD3_FOR_ANALOGY = 'buy', 'buying', 'sell
 NUM_WORDS_FOR_COMPARISON = 10
 
 parser = ArgumentParser(description='Training methods for word2vec')
-parser.add_argument("--contextSize", "-cs", type=int, default=CONTEXT_SIZE, help="Context size for training")
-parser.add_argument("--embeddingDimension", "-ed", type=int, default=EMBEDDING_DIM, help="Internal embedding dimension")
-parser.add_argument("--minWordCount", "-mwc", type=int, default=MIN_WORD_COUNT,
+parser.add_argument("-cs", "--contextSize", type=int, default=CONTEXT_SIZE, help="Context size for training")
+parser.add_argument("-ed", "--embeddingDimension", type=int, default=EMBEDDING_DIM, help="Internal embedding dimension")
+parser.add_argument("-mwc", "--minWordCount", type=int, default=MIN_WORD_COUNT,
                     help="Minimum word count to not be mapped to unknown word")
-parser.add_argument("--trainProportion", "-tp", type=float, default=TRAIN_PROPORTION,
+parser.add_argument("-tp", "--trainProportion", type=float, default=TRAIN_PROPORTION,
                     help="Proportion of reviews to use in training set")
-parser.add_argument("--validProportion", "-vp", type=float, default=VALID_PROPORTION,
+parser.add_argument("-vp", "--validProportion", type=float, default=VALID_PROPORTION,
                     help="Proportion of reviews to use in validation set")
-parser.add_argument("--learningRate", "-lr", type=float, default=LEARNING_RATE, help="Initial learning rate to use")
-parser.add_argument("--momentum", "-m", type=float, default=MOMENTUM, help="Momentum to use in optimiser")
-parser.add_argument("--batchSize", "-bs", type=int, default=BATCH_SIZE,  help="Batch size for training")
-parser.add_argument("--batchesForLogging", "-bsfl", type=int, default=BATCHES_FOR_LOGGING,
+parser.add_argument("-lr", "--learningRate", type=float, default=LEARNING_RATE, help="Initial learning rate to use")
+parser.add_argument("-m", "--momentum", type=float, default=MOMENTUM, help="Momentum to use in optimiser")
+parser.add_argument("-bs", "--batchSize", type=int, default=BATCH_SIZE,  help="Batch size for training")
+parser.add_argument("-bsfl", "--batchesForLogging", type=int, default=BATCHES_FOR_LOGGING,
                     help="After how many batches processed should the progress be logged")
-parser.add_argument("--epochs", "-e", type=int, default=EPOCHS, help="How many epochs to train for")
-parser.add_argument("--learningRateDecayFactor", "-lrdf", type=float, default=LEARNING_RATE_DECAY_FACTOR,
+parser.add_argument("-e", "--epochs", type=int, default=EPOCHS, help="How many epochs to train for")
+parser.add_argument("-lrdf", "--learningRateDecayFactor", type=float, default=LEARNING_RATE_DECAY_FACTOR,
                     help="How much to reduce the learning rate when plateauing")
-parser.add_argument("--patience", "-p", type=int, default=PATIENCE,
+parser.add_argument("-p", "--patience", type=int, default=PATIENCE,
                     help="How many epochs without progress until plateau is declared")
-parser.add_argument("--subsampleThreshold", "-sst", type=float, default=SUBSAMPLE_THRESHOLD,
+parser.add_argument("-sst", "--subsampleThreshold", type=float, default=SUBSAMPLE_THRESHOLD,
                     help="Threshold frequency of words to begin subsampling")
-parser.add_argument("--unigramDistributionPower", "-udp", type=float, default=UNIGRAM_DISTRIBUTION_POWER,
+parser.add_argument("-udp", "--unigramDistributionPower", type=float, default=UNIGRAM_DISTRIBUTION_POWER,
                     help="Adjustment to unigram distribution to make in selecting negative samples")
-parser.add_argument("--numNegativeSamples", "-nns", type=int, default=NUM_NEGATIVE_SAMPLES,
+parser.add_argument("-nns", "--numNegativeSamples", type=int, default=NUM_NEGATIVE_SAMPLES,
                     help="Number of negative samples to use")
-parser.add_argument("--innerProductClamp", "-ipc", type=float, default=INNER_PRODUCT_CLAMP,
+parser.add_argument("-ipc", "--innerProductClamp", type=float, default=INNER_PRODUCT_CLAMP,
                     help="How much to clamp the internal inner products")
-parser.add_argument("--algorithmType", "-at", type=str, default=ALGORITHM_TYPE, help="Which algorithm to use")
-parser.add_argument("--wordForComparison", "-wfc", type=str, default=WORD_FOR_COMPARISON,
+parser.add_argument("-at", "--algorithmType", type=str, default=ALGORITHM_TYPE, help="Which algorithm to use")
+parser.add_argument("-wfc", "--wordForComparison", type=str, default=WORD_FOR_COMPARISON,
                     help="Word to compare other embeddings against")
-parser.add_argument("--word1ForAnalogy", "-w1", type=str, default=WORD1_FOR_ANALOGY,
+parser.add_argument("-w1", "--word1ForAnalogy", type=str, default=WORD1_FOR_ANALOGY,
                     help="First word in analogy task (word 1 is to word 2 as word 3 is to what?)")
-parser.add_argument("--word2ForAnalogy", "-w2", type=str, default=WORD2_FOR_ANALOGY,
+parser.add_argument("-w2", "--word2ForAnalogy", type=str, default=WORD2_FOR_ANALOGY,
                     help="Second word in analogy task (word 1 is to word 2 as word 3 is to what?)")
-parser.add_argument("--word3ForAnalogy", "-w3", type=str, default=WORD3_FOR_ANALOGY,
+parser.add_argument("-w3", "--word3ForAnalogy", type=str, default=WORD3_FOR_ANALOGY,
                     help="Third word in analogy task (word 1 is to word 2 as word 3 is to what?)")
-parser.add_argument("--numWordsForComparison", "-nwfc", type=int, default=NUM_WORDS_FOR_COMPARISON,
+parser.add_argument("-nwfc", "--numWordsForComparison", type=int, default=NUM_WORDS_FOR_COMPARISON,
                     help="Number of words to compare against in similarity or analogy tasks")
-parser.add_argument("--name", "-n", type=str, default=NAME, help="Name for the model (indicates which reviews to use)")
+parser.add_argument("-n", "--name", type=str, default=NAME, help="Name for the model (indicates which reviews to use)")
 
-parser.add_argument("--setup", "-S", help="Whether to setup and train a model", action="store_true")
-parser.add_argument("--evaluate", "-E", help="Whether to evaluate after training", action="store_true")
-parser.add_argument("--compare", "-C", help="Whether to load a model and perform comparison task", action="store_true")
-parser.add_argument("--analogy", "-A", help="Whether to load a model and perform analogy task", action="store_true")
+parser.add_argument("-S", "--setup", help="Whether to setup and train a model", action="store_true")
+parser.add_argument("-E", "--evaluate", help="Whether to evaluate after training", action="store_true")
+parser.add_argument("-C", "--compare", help="Whether to load a model and perform comparison task", action="store_true")
+parser.add_argument("-A", "--analogy", help="Whether to load a model and perform analogy task", action="store_true")
 
 args = parser.parse_args()
 
@@ -116,9 +116,9 @@ def checkAlgorithmImplemented(algorithm, logObject, implementedModels=None):
     if implementedModels is None:
         implementedModels = IMPLEMENTED_MODELS
     if algorithm.upper() not in implementedModels:
-        errorMessage = 'Unknown embedding algorithm: ' + str(algorithm) + '; supported options are:'
+        errorMessage = 'Unknown embedding algorithm: {0}; supported options are:'.format(str(algorithm))
         for model in implementedModels:
-            errorMessage += ' ' + model
+            errorMessage += ' {0}'.format(model)
         errorMessage += '.'
         writeLog(errorMessage, logObject)
         raise Exception(errorMessage)
@@ -148,8 +148,7 @@ def noiseDistribution(frequencies, unigramDistributionPower):
 
 
 def produceNegativeSamples(distribution, numNegativeSamples, batchSize):
-    distributions = torch.tensor(distribution, dtype=torch.float).unsqueeze(0).expand(batchSize, len(distribution))
-    return torch.multinomial(distributions, num_samples=numNegativeSamples, replacement=False)
+    return torch.multinomial(distribution, batchSize * numNegativeSamples, replacement=True).view(batchSize, -1)
 
 
 def getData(filePath, logObject):
@@ -158,7 +157,7 @@ def getData(filePath, logObject):
     for line in file:
         rawData.append(loads(line))
     file.close()
-    writeLog("Number of reviews: " + str(len(rawData)), logObject)
+    writeLog("Number of reviews: {0}".format(str(len(rawData))), logObject)
     return rawData
 
 
@@ -180,7 +179,7 @@ def buildWordCounts(rawData, logObject):
                 wordCounts[word] += 1
             else:
                 wordCounts[word] = 1
-    writeLog("Number of distinct words: " + str(len(wordCounts)), logObject)
+    writeLog("Number of distinct words: {0}".format(str(len(wordCounts))), logObject)
     return wordCounts
 
 
@@ -198,8 +197,9 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower, lo
     numWords = float(sum(wordCounts[word] for word in wordCounts))
     frequencies = [wordCounts[word] / numWords for word in allowableVocab]
     if totalRareWords > 0:
-        writeLog("Words exist with total count less than " + str(minWordCount) + " which will be replaced with " +
-                 unknownToken, logObject)
+        writeLog("Words exist with total count less than {0} which will be replaced with {1}".format(str(minWordCount),
+                                                                                                     unknownToken),
+                 logObject)
         reverseWordMapping[len(allowableVocab)] = unknownToken
         frequencies.append(totalRareWords / numWords)
         wordMapping[unknownToken] = len(allowableVocab)
@@ -209,7 +209,7 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower, lo
         allowableVocab.append(unknownToken)
     vocabularySize = len(allowableVocab)
     distribution = noiseDistribution(frequencies, unigramDistributionPower)
-    writeLog("Vocabulary size: " + str(vocabularySize), logObject)
+    writeLog("Vocabulary size: {0}".format(str(vocabularySize)), logObject)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, distribution
 
 
@@ -251,7 +251,7 @@ def buildDataLoader(rawData, wordMapping, frequencies, contextSize, algorithm, t
                     continue
             xs.append(dataPointX)
             ys.append(dataPointY)
-    writeLog("Size of data: " + str(len(xs)), logObject)
+    writeLog("Size of data: {0}".format(str(len(xs))), logObject)
     xs, ys = map(torch.tensor, (xs, ys))
     ds = TensorDataset(xs, ys)
     if batchSize is not None:
@@ -284,7 +284,7 @@ def setup(filePath, logObject, batchSize=args.batchSize, contextSize=args.contex
     testDl = buildDataLoader(testData, wordMapping, frequencies, contextSize, algorithm, threshold, logObject,
                              subSample=False, batchSize=2 * batchSize, shuffle=False)
     seconds = (datetime.now() - now).total_seconds()
-    writeLog("Setting up took: " + str(seconds) + " seconds", logObject)
+    writeLog("Setting up took: {0} seconds".format(str(seconds)), logObject)
     return wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, distribution, trainDl, validDl, testDl
 
 
@@ -342,9 +342,9 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
           lr=args.learningRate, momentum=args.momentum, numNegativeSamples=args.numNegativeSamples,
           learningRateDecayFactor=args.learningRateDecayFactor, patience=args.patience, algorithm=args.algorithmType):
     checkAlgorithmImplemented(algorithm, logObject)
-    writeLog("Training " + algorithm + " for " + str(epochs) + " epochs. Initial learning rate is " + str(lr) +
-             " with a decay factor of " + str(learningRateDecayFactor) + " after " + str(patience) +
-             " epochs without progress.", logObject)
+    writeLog(
+        "Training {0} for {1} epochs. Initial learning rate is {2} with a decay factor of {3} after {4} epochs without progress.".format(
+            algorithm, str(epochs), str(lr), str(learningRateDecayFactor), str(patience)), logObject)
     trainLosses = []
     valLosses = []
     if algorithm.upper() == 'CBOW':
@@ -353,16 +353,19 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
     elif algorithm.upper() == 'SGNS':
         model = SkipGramWithNegativeSampling(vocabSize, embeddingDim, contextSize, numNegativeSamples,
                                              innerProductClamp, modelName)
+        distributionTensor = torch.tensor(distribution, dtype=torch.float)
     if CUDA:
         model.cuda()
+        if algorithm.upper() == 'SGNS':
+            distributionTensor = distributionTensor.to('cuda')
     optimizer = SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
                                   verbose=True)
 
     for epoch in range(epochs):
         now = datetime.now()
-        writeLog("Epoch: " + str(epoch), logObject)
-        writeLog("Training on " + str(len(trainDl)) + " batches and validating on " + str(len(validDl)) + " batches",
+        writeLog("Epoch: {0}".format(str(epoch)), logObject)
+        writeLog("Training on {0} batches and validating on {1} batches".format(str(len(trainDl)), str(len(validDl))),
                  logObject)
 
         model.train()
@@ -376,7 +379,7 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
                 predictions = model(xb)
                 loss = lossFunction(predictions, yb)
             elif algorithm.upper() == 'SGNS':
-                negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
+                negativeSamples = produceNegativeSamples(distributionTensor, numNegativeSamples, len(yb))
                 if CUDA:
                     negativeSamples = negativeSamples.to('cuda')
                 loss = torch.mean(model(yb, xb, negativeSamples))
@@ -386,10 +389,11 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
             optimizer.zero_grad()
             numBatchesProcessed += 1
             if numBatchesProcessed % args.batchesForLogging == 0:
-                writeLog("Processed " + str(numBatchesProcessed) + " batches out of " + str(len(trainDl)) +
-                         " (training)", logObject)
+                writeLog(
+                    "Processed {0} batches out of {1} (training)".format(str(numBatchesProcessed), str(len(trainDl))),
+                    logObject)
         trainLoss = totalLoss / len(trainDl)
-        writeLog("Training loss: " + str(trainLoss), logObject)
+        writeLog("Training loss: {0}".format(str(trainLoss)), logObject)
         trainLosses.append(trainLoss)
 
         model.eval()
@@ -403,34 +407,35 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
                 if algorithm.upper() == 'CBOW':
                     validLoss += lossFunction(model(xb), yb).item()
                 elif algorithm.upper() == 'SGNS':
-                    negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
+                    negativeSamples = produceNegativeSamples(distributionTensor, numNegativeSamples, len(yb))
                     if CUDA:
                         negativeSamples = negativeSamples.to('cuda')
                     loss = model(yb, xb, negativeSamples)
                     validLoss += torch.mean(loss).item()
                 numBatchesProcessed += 1
                 if numBatchesProcessed % args.batchesForLogging == 0:
-                    writeLog("Processed " + str(numBatchesProcessed) + " batches out of " + str(len(validDl)) +
-                             " (validation)", logObject)
+                    writeLog("Processed {0} batches out of {1} (validation)".format(str(numBatchesProcessed),
+                                                                                    str(len(validDl))), logObject)
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
-        writeLog("Validation loss: " + str(validLoss), logObject)
+        writeLog("Validation loss: {0}".format(str(validLoss)), logObject)
 
         seconds = (datetime.now() - now).total_seconds()
-        writeLog("Epoch took: " + str(seconds) + " seconds", logObject)
+        writeLog("Epoch took: {0} seconds".format(str(seconds)), logObject)
         scheduler.step(validLoss)
 
-        torch.save(model.state_dict(), modelName + str(epoch) + 'intermediate' + str(embeddingDim) + algorithm +
-                   str(contextSize) + '.pt')
+        torch.save(model.state_dict(),
+                   '{0}{1}intermediate{2}{3}{4}.pt'.format(modelName, str(epoch), str(embeddingDim), algorithm,
+                                                           str(contextSize)))
 
     fig, ax = plt.subplots()
     ax.plot(range(epochs), trainLosses, label="Training")
     ax.plot(range(epochs), valLosses, label="Validation")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    ax.set_title("Learning curve for model " + str(modelName))
+    ax.set_title("Learning curve for model {0}".format(str(modelName)))
     ax.legend()
-    plt.savefig(modelName + 'learningCurve' + str(embeddingDim) + algorithm + str(contextSize) + '.png')
+    plt.savefig('{0}learningCurve{1}{2}{3}.png'.format(modelName, str(embeddingDim), algorithm, str(contextSize)))
 
     return model
 
@@ -488,14 +493,14 @@ def loadModelState(modelName, logObject, algorithm=args.algorithmType,
     model.load_state_dict(torch.load(modelName + algorithm + '.pt'))
     if CUDA:
         model.cuda()
-    writeLog("Loaded model " + modelName, logObject)
+    writeLog("Loaded model {0}".format(modelName), logObject)
     model.eval()
     return wordMapping, reverseWordMapping, vocabulary, frequencies, distribution, model
 
 
 def topKSimilarities(model, word, wordMapping, vocabulary, logObject, K, unknownToken=UNKNOWN_TOKEN):
     if word.lower() not in wordMapping:
-        writeLog(word + " not in vocabulary", logObject)
+        writeLog("{0} not in vocabulary".format(word), logObject)
         return {}
     with torch.no_grad():
         wordTensor = torch.tensor(wordMapping[word.lower()], dtype=torch.long)
@@ -505,9 +510,9 @@ def topKSimilarities(model, word, wordMapping, vocabulary, logObject, K, unknown
         wordEmbedding = model.embeddings(wordTensor)
     results = topKSimilaritiesToEmbedding(model, wordEmbedding, wordMapping, vocabulary, [word.lower()], K,
                                           unknownToken)
-    writeLog("Most similar words to " + word, logObject)
+    writeLog("Most similar words to {0}".format(word), logObject)
     for result in results:
-        writeLog(result + " (score = " + str(results[result]) + ")", logObject)
+        writeLog("{0} (score = {1})".format(result, str(results[result])), logObject)
     return results
 
 
@@ -530,13 +535,13 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
                             unknownToken=UNKNOWN_TOKEN):
     unknownWord = False
     if word1.lower() not in wordMapping:
-        writeLog(word1 + " not in vocabulary", logObject)
+        writeLog("{0} not in vocabulary".format(word1), logObject)
         unknownToken = True
     if word2.lower() not in wordMapping:
-        writeLog(word2 + " not in vocabulary", logObject)
+        writeLog("{0} not in vocabulary".format(word2), logObject)
         unknownWord = True
     if word3.lower() not in wordMapping:
-        writeLog(word3 + " not in vocabulary", logObject)
+        writeLog("{0} not in vocabulary".format(word3), logObject)
         unknownWord = True
     if unknownWord:
         return {}
@@ -555,9 +560,9 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
         diff = word2Embedding - word1Embedding + word3Embedding
     results = topKSimilaritiesToEmbedding(model, diff, wordMapping, vocabulary,
                                           [word1.lower(), word2.lower(), word3.lower()], K, unknownToken)
-    writeLog("Most similar words to complete the analogy " + word1 + ":" + word2 + "::" + word3 + ":___", logObject)
+    writeLog("Most similar words to complete the analogy {0}:{1}::{2}:___".format(word1, word2, word3), logObject)
     for result in results:
-        writeLog(result + " (score = " + str(results[result]) + ")", logObject)
+        writeLog("{0} (score = {1})".format(result, str(results[result])), logObject)
     return results
 
 
@@ -567,39 +572,44 @@ def finalEvaluation(model, testDl, logObject, distribution=None, lossFunction=nn
     with torch.no_grad():
         loss = 0
         numBatchesProcessed = 0
+        if model.algorithmType == 'SGNS':
+            distributionTensor = torch.tensor(distribution, dtype=torch.float)
         for xb, yb in testDl:
             if CUDA:
                 xb = xb.to('cuda')
                 yb = yb.to('cuda')
                 model.cuda()
+                if model.algorithmType == 'SGNS':
+                    distributionTensor = distributionTensor.to('cuda')
             if model.algorithmType == 'CBOW':
                 loss += lossFunction(model(xb), yb).item()
             elif model.algorithmType == 'SGNS':
-                negativeSamples = produceNegativeSamples(distribution, numNegativeSamples, len(yb))
+                negativeSamples = produceNegativeSamples(distributionTensor, numNegativeSamples, len(yb))
                 if CUDA:
                     negativeSamples = negativeSamples.to('cuda')
                 loss = model(yb, xb, negativeSamples)
                 loss += torch.mean(loss).item()
             numBatchesProcessed += 1
             if numBatchesProcessed % args.batchesForLogging == 0:
-                writeLog("Processed " + str(numBatchesProcessed) + " batches out of " + str(len(testDl)) +
-                         " (testing)", logObject)
+                writeLog(
+                    "Processed {0} batches out of {1} (testing)".format(str(numBatchesProcessed), str(len(testDl))),
+                    logObject)
         loss = loss / len(testDl)
-    writeLog("Test loss: " + str(loss), logObject)
+    writeLog("Test loss: {0}".format(str(loss)), logObject)
     seconds = (datetime.now() - now).total_seconds()
-    writeLog("Took: " + str(seconds) + " seconds to compute test loss", logObject)
+    writeLog("Took: {0} seconds to compute test loss".format(str(seconds)), logObject)
     return loss
 
 
 def writeLog(message, logObject, timestamp=datetime.now()):
-    logObject.info("[" + str(timestamp) + "]: " + message)
+    logObject.info("[{0}]: {1}".format(str(timestamp), message))
     return
 
 
 logger = logging.getLogger()
 logging.basicConfig(level=logging.INFO, stream=stdout)
 logger.addHandler(logging.FileHandler("log" + FULL_NAME + ".txt"))
-writeLog("Running " + FULL_NAME, logger)
+writeLog("Running {0}".format(FULL_NAME), logger)
 writeLog(str(args), logger)
 if CUDA:
     writeLog("Cuda is available", logger)
@@ -624,4 +634,4 @@ else:
                                                          args.word3ForAnalogy, wordIndex, vocab, logger,
                                                          args.numWordsForComparison)
 
-writeLog("Finished running " + FULL_NAME, logger)
+writeLog("Finished running {0}".format(FULL_NAME), logger)
