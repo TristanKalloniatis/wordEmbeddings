@@ -15,6 +15,8 @@ from pickle import dump, load
 from random import random
 from math import sqrt
 
+ALGORITHM_TYPE = 'CBOW'
+NAME = 'groceries'
 CONTEXT_SIZE = 3
 EMBEDDING_DIM = 16
 MIN_WORD_COUNT = 10
@@ -33,7 +35,7 @@ NUM_NEGATIVE_SAMPLES = 10
 UNKNOWN_TOKEN = '???'
 INNER_PRODUCT_CLAMP = 4.
 WORD_FOR_COMPARISON = 'apple'
-WORD1_FOR_ANALOGY, WORD2_FOR_ANALOGY, WORD3_FOR_ANALOGY = 'buying', 'buy', 'sell'
+WORD1_FOR_ANALOGY, WORD2_FOR_ANALOGY, WORD3_FOR_ANALOGY = 'buy', 'buying', 'sell'
 NUM_WORDS_FOR_COMPARISON = 10
 
 parser = ArgumentParser(description='Training methods for word2vec')
@@ -63,21 +65,41 @@ parser.add_argument("--numNegativeSamples", "-nns", type=int, default=NUM_NEGATI
                     help="Number of negative samples to use")
 parser.add_argument("--innerProductClamp", "-ipc", type=float, default=INNER_PRODUCT_CLAMP,
                     help="How much to clamp the internal inner products")
-parser.add_argument("--algorithmType", "-at", type=str, default='CBOW', help="Which algorithm to use")
+parser.add_argument("--algorithmType", "-at", type=str, default=ALGORITHM_TYPE, help="Which algorithm to use")
 parser.add_argument("--wordForComparison", "-wfc", type=str, default=WORD_FOR_COMPARISON,
                     help="Word to compare other embeddings against")
-parser.add_argument("--word1ForAnalogy", "-w1fa", type=str, default=WORD1_FOR_ANALOGY,
-                    help="First word in analogy task (word 2 is to word 1 as word 3 is to what?)")
-parser.add_argument("--word2ForAnalogy", "-w2fa", type=str, default=WORD2_FOR_ANALOGY,
-                    help="Second word in analogy task (word 2 is to word 1 as word 3 is to what?)")
-parser.add_argument("--word3ForAnalogy", "-w3fa", type=str, default=WORD3_FOR_ANALOGY,
-                    help="Third word in analogy task (word 2 is to word 1 as word 3 is to what?)")
+parser.add_argument("--word1ForAnalogy", "-w1", type=str, default=WORD1_FOR_ANALOGY,
+                    help="First word in analogy task (word 1 is to word 2 as word 3 is to what?)")
+parser.add_argument("--word2ForAnalogy", "-w2", type=str, default=WORD2_FOR_ANALOGY,
+                    help="Second word in analogy task (word 1 is to word 2 as word 3 is to what?)")
+parser.add_argument("--word3ForAnalogy", "-w3", type=str, default=WORD3_FOR_ANALOGY,
+                    help="Third word in analogy task (word 1 is to word 2 as word 3 is to what?)")
 parser.add_argument("--numWordsForComparison", "-nwfc", type=int, default=NUM_WORDS_FOR_COMPARISON,
                     help="Number of words to compare against in similarity or analogy tasks")
+parser.add_argument("--name", "-n", type=str, default=NAME, help="Name for the model (indicates which reviews to use)")
 
-parser.add_argument("--name", "-n", type=str, required=True, default='groceries', help="Name for the model")
+parser.add_argument("--setup", "-S", help="Whether to setup and train a model", action="store_true")
+parser.add_argument("--evaluate", "-E", help="Whether to evaluate after training", action="store_true")
+parser.add_argument("--compare", "-C", help="Whether to load a model and perform comparison task", action="store_true")
+parser.add_argument("--analogy", "-A", help="Whether to load a model and perform analogy task", action="store_true")
 
 args = parser.parse_args()
+
+if not args.setup:
+    if args.evaluate:
+        raise Exception("Cannot train or evaluate a model without --setup flag activated")
+    if not args.compare and not args.analogy:
+        raise Exception("Must specify either comparison or analogy mode for pretrained models")
+else:
+    if args.compare or args.analogy:
+        raise Exception("Comparison and analogy modes are for pretrained models only, so --setup flag is not required")
+
+if args.name == 'groceries':
+    REVIEW_FILE = 'reviews_Grocery_and_Gourmet_Food_5.json.gz'
+elif args.name == 'instruments':
+    REVIEW_FILE = 'reviews_Musical_Instruments_5.json.gz'
+else:
+    raise Exception("Invalid review file")
 
 IMPLEMENTED_MODELS = ['CBOW', 'SGNS']
 MIN_REVIEW_LENGTH = 2 * args.contextSize + 1
@@ -340,6 +362,8 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
     for epoch in range(epochs):
         now = datetime.now()
         writeLog("Epoch: " + str(epoch), logObject)
+        writeLog("Training on " + str(len(trainDl)) + " batches and validating on " + str(len(validDl)) + " batches",
+                 logObject)
 
         model.train()
         totalLoss = 0
@@ -469,7 +493,7 @@ def loadModelState(modelName, logObject, algorithm=args.algorithmType,
     return wordMapping, reverseWordMapping, vocabulary, frequencies, distribution, model
 
 
-def topKSimilarities(model, word, wordMapping, vocabulary, logObject, K=10, unknownToken=UNKNOWN_TOKEN):
+def topKSimilarities(model, word, wordMapping, vocabulary, logObject, K, unknownToken=UNKNOWN_TOKEN):
     if word.lower() not in wordMapping:
         writeLog(word + " not in vocabulary", logObject)
         return {}
@@ -479,7 +503,8 @@ def topKSimilarities(model, word, wordMapping, vocabulary, logObject, K=10, unkn
             wordTensor = wordTensor.to('cuda')
             model.cuda()
         wordEmbedding = model.embeddings(wordTensor)
-    results = topKSimilaritiesToEmbedding(model, wordEmbedding, wordMapping, vocabulary, [word.lower()], K, unknownToken)
+    results = topKSimilaritiesToEmbedding(model, wordEmbedding, wordMapping, vocabulary, [word.lower()], K,
+                                          unknownToken)
     writeLog("Most similar words to " + word, logObject)
     for result in results:
         writeLog(result + " (score = " + str(results[result]) + ")", logObject)
@@ -501,7 +526,7 @@ def topKSimilaritiesToEmbedding(model, embedding, wordMapping, vocabulary, ignor
     return {k: v for k, v in sorted(allSimilarities.items(), key=lambda item: item[1], reverse=True)[:K]}
 
 
-def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, logObject, K=10,
+def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary, logObject, K,
                             unknownToken=UNKNOWN_TOKEN):
     unknownWord = False
     if word1.lower() not in wordMapping:
@@ -527,10 +552,10 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
         word1Embedding = model.embeddings(word1Tensor)
         word2Embedding = model.embeddings(word2Tensor)
         word3Embedding = model.embeddings(word3Tensor)
-        diff = word1Embedding - word2Embedding + word3Embedding
+        diff = word2Embedding - word1Embedding + word3Embedding
     results = topKSimilaritiesToEmbedding(model, diff, wordMapping, vocabulary,
                                           [word1.lower(), word2.lower(), word3.lower()], K, unknownToken)
-    writeLog("Most similar words to complete the analogy " + word2 + ":" + word1 + "::" + word3 + ":___", logObject)
+    writeLog("Most similar words to complete the analogy " + word1 + ":" + word2 + "::" + word3 + ":___", logObject)
     for result in results:
         writeLog(result + " (score = " + str(results[result]) + ")", logObject)
     return results
@@ -581,19 +606,22 @@ if CUDA:
 else:
     writeLog("Cuda is not available", logger)
 
-# Example usage:
-
-wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup('reviews_Grocery_and_Gourmet_Food_5.json.gz', logger, algorithm=args.algorithmType)
-trainedModel = train(args.name, trainDataLoader, validDataLoader, VOCAB_SIZE, logger, distribution=sampleDistribution,
-                     algorithm=args.algorithmType)
-testLoss = finalEvaluation(trainedModel, testDataLoader, logger, distribution=sampleDistribution)
-saveModelState(trainedModel, wordIndex, reverseWordIndex, vocab, wordFrequencies, logger)
-wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(args.name, logger,
-                                                                                                      algorithm=args.algorithmType)
-topSimilarities = topKSimilarities(loadedModel, args.wordForComparison, wordIndex, vocab, logger,
-                                   args.numWordsForComparison)
-topSimilaritiesAnalogy = topKSimilaritiesAnalogy(loadedModel, args.word1ForAnalogy, args.word2ForAnalogy,
-                                                 args.word3ForAnalogy, wordIndex, vocab, logger,
-                                                 args.numWordsForComparison)
+if args.setup:
+    wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, sampleDistribution, trainDataLoader, validDataLoader, testDataLoader = setup(REVIEW_FILE, logger, algorithm=args.algorithmType)
+    trainedModel = train(args.name, trainDataLoader, validDataLoader, VOCAB_SIZE, logger,
+                         distribution=sampleDistribution, algorithm=args.algorithmType)
+    if args.evaluate:
+        testLoss = finalEvaluation(trainedModel, testDataLoader, logger, distribution=sampleDistribution)
+    saveModelState(trainedModel, wordIndex, reverseWordIndex, vocab, wordFrequencies, logger)
+else:
+    wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = \
+        loadModelState(args.name, logger, algorithm=args.algorithmType)
+    if args.compare:
+        topSimilarities = topKSimilarities(loadedModel, args.wordForComparison, wordIndex, vocab, logger,
+                                           args.numWordsForComparison)
+    if args.analogy:
+        topSimilaritiesAnalogy = topKSimilaritiesAnalogy(loadedModel, args.word1ForAnalogy, args.word2ForAnalogy,
+                                                         args.word3ForAnalogy, wordIndex, vocab, logger,
+                                                         args.numWordsForComparison)
 
 writeLog("Finished running " + FULL_NAME, logger)
