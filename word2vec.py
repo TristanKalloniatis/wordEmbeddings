@@ -116,7 +116,7 @@ def checkAlgorithmImplemented(algorithm, logObject, implementedModels=None):
     if implementedModels is None:
         implementedModels = IMPLEMENTED_MODELS
     if algorithm.upper() not in implementedModels:
-        errorMessage = 'Unknown embedding algorithm: {0}; supported options are:'.format(str(algorithm))
+        errorMessage = 'Unknown embedding algorithm: {0}; supported options are:'.format(algorithm)
         for model in implementedModels:
             errorMessage += ' {0}'.format(model)
         errorMessage += '.'
@@ -157,7 +157,7 @@ def getData(filePath, logObject):
     for line in file:
         rawData.append(loads(line))
     file.close()
-    writeLog("Number of reviews: {0}".format(str(len(rawData))), logObject)
+    writeLog("Number of reviews: {0}".format(len(rawData)), logObject)
     return rawData
 
 
@@ -179,7 +179,7 @@ def buildWordCounts(rawData, logObject):
                 wordCounts[word] += 1
             else:
                 wordCounts[word] = 1
-    writeLog("Number of distinct words: {0}".format(str(len(wordCounts))), logObject)
+    writeLog("Number of distinct words: {0}".format(len(wordCounts)), logObject)
     return wordCounts
 
 
@@ -197,7 +197,7 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower, lo
     numWords = float(sum(wordCounts[word] for word in wordCounts))
     frequencies = [wordCounts[word] / numWords for word in allowableVocab]
     if totalRareWords > 0:
-        writeLog("Words exist with total count less than {0} which will be replaced with {1}".format(str(minWordCount),
+        writeLog("Words exist with total count less than {0} which will be replaced with {1}".format(minWordCount,
                                                                                                      unknownToken),
                  logObject)
         reverseWordMapping[len(allowableVocab)] = unknownToken
@@ -209,7 +209,7 @@ def buildVocab(rawData, minWordCount, unknownToken, unigramDistributionPower, lo
         allowableVocab.append(unknownToken)
     vocabularySize = len(allowableVocab)
     distribution = noiseDistribution(frequencies, unigramDistributionPower)
-    writeLog("Vocabulary size: {0}".format(str(vocabularySize)), logObject)
+    writeLog("Vocabulary size: {0}".format(vocabularySize), logObject)
     return wordMapping, reverseWordMapping, allowableVocab, vocabularySize, frequencies, distribution
 
 
@@ -251,7 +251,7 @@ def buildDataLoader(rawData, wordMapping, frequencies, contextSize, algorithm, t
                     continue
             xs.append(dataPointX)
             ys.append(dataPointY)
-    writeLog("Size of data: {0}".format(str(len(xs))), logObject)
+    writeLog("Size of data: {0}".format(len(xs)), logObject)
     xs, ys = map(torch.tensor, (xs, ys))
     ds = TensorDataset(xs, ys)
     if batchSize is not None:
@@ -284,7 +284,7 @@ def setup(filePath, logObject, batchSize=args.batchSize, contextSize=args.contex
     testDl = buildDataLoader(testData, wordMapping, frequencies, contextSize, algorithm, threshold, logObject,
                              subSample=False, batchSize=2 * batchSize, shuffle=False)
     seconds = (datetime.now() - now).total_seconds()
-    writeLog("Setting up took: {0} seconds".format(str(seconds)), logObject)
+    writeLog("Setting up took: {0} seconds".format(seconds), logObject)
     return wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, distribution, trainDl, validDl, testDl
 
 
@@ -344,7 +344,7 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
     checkAlgorithmImplemented(algorithm, logObject)
     writeLog(
         "Training {0} for {1} epochs. Initial learning rate is {2} with a decay factor of {3} after {4} epochs without progress.".format(
-            algorithm, str(epochs), str(lr), str(learningRateDecayFactor), str(patience)), logObject)
+            algorithm, epochs, lr, learningRateDecayFactor, patience), logObject)
     trainLosses = []
     valLosses = []
     if algorithm.upper() == 'CBOW':
@@ -364,9 +364,8 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
 
     for epoch in range(epochs):
         now = datetime.now()
-        writeLog("Epoch: {0}".format(str(epoch)), logObject)
-        writeLog("Training on {0} batches and validating on {1} batches".format(str(len(trainDl)), str(len(validDl))),
-                 logObject)
+        writeLog("Epoch: {0}".format(epoch), logObject)
+        writeLog("Training on {0} batches and validating on {1} batches".format(len(trainDl), len(validDl)), logObject)
 
         model.train()
         totalLoss = 0
@@ -390,10 +389,9 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
             numBatchesProcessed += 1
             if numBatchesProcessed % args.batchesForLogging == 0:
                 writeLog(
-                    "Processed {0} batches out of {1} (training)".format(str(numBatchesProcessed), str(len(trainDl))),
-                    logObject)
+                    "Processed {0} batches out of {1} (training)".format(numBatchesProcessed, len(trainDl)), logObject)
         trainLoss = totalLoss / len(trainDl)
-        writeLog("Training loss: {0}".format(str(trainLoss)), logObject)
+        writeLog("Training loss: {0}".format(trainLoss), logObject)
         trainLosses.append(trainLoss)
 
         model.eval()
@@ -414,28 +412,27 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
                     validLoss += torch.mean(loss).item()
                 numBatchesProcessed += 1
                 if numBatchesProcessed % args.batchesForLogging == 0:
-                    writeLog("Processed {0} batches out of {1} (validation)".format(str(numBatchesProcessed),
-                                                                                    str(len(validDl))), logObject)
+                    writeLog("Processed {0} batches out of {1} (validation)".format(numBatchesProcessed, len(validDl)),
+                             logObject)
         validLoss = validLoss / len(validDl)
         valLosses.append(validLoss)
-        writeLog("Validation loss: {0}".format(str(validLoss)), logObject)
+        writeLog("Validation loss: {0}".format(validLoss), logObject)
 
         seconds = (datetime.now() - now).total_seconds()
-        writeLog("Epoch took: {0} seconds".format(str(seconds)), logObject)
+        writeLog("Epoch took: {0} seconds".format(seconds), logObject)
         scheduler.step(validLoss)
 
         torch.save(model.state_dict(),
-                   '{0}{1}intermediate{2}{3}{4}.pt'.format(modelName, str(epoch), str(embeddingDim), algorithm,
-                                                           str(contextSize)))
+                   '{0}{1}intermediate{2}{3}{4}.pt'.format(modelName, epoch, embeddingDim, algorithm, contextSize))
 
     fig, ax = plt.subplots()
     ax.plot(range(epochs), trainLosses, label="Training")
     ax.plot(range(epochs), valLosses, label="Validation")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Loss")
-    ax.set_title("Learning curve for model {0}".format(str(modelName)))
+    ax.set_title("Learning curve for model {0}".format(modelName))
     ax.legend()
-    plt.savefig('{0}learningCurve{1}{2}{3}.png'.format(modelName, str(embeddingDim), algorithm, str(contextSize)))
+    plt.savefig('{0}learningCurve{1}{2}{3}.png'.format(modelName, embeddingDim, algorithm, contextSize))
 
     return model
 
@@ -469,7 +466,7 @@ def saveModelState(model, wordMapping, reverseWordMapping, vocabulary, frequenci
 def loadModelState(modelName, logObject, algorithm=args.algorithmType,
                    unigramDistributionPower=args.unigramDistributionPower):
     checkAlgorithmImplemented(algorithm, logObject)
-    infile = open(modelName + 'wordMapping', 'rb')
+    infile = open(modelName + 'WordMapping', 'rb')
     wordMapping = load(infile)
     infile.close()
     infile = open(modelName + 'reverseWordMapping', 'rb')
@@ -512,7 +509,7 @@ def topKSimilarities(model, word, wordMapping, vocabulary, logObject, K, unknown
                                           unknownToken)
     writeLog("Most similar words to {0}".format(word), logObject)
     for result in results:
-        writeLog("{0} (score = {1})".format(result, str(results[result])), logObject)
+        writeLog("{0} (score = {1})".format(result, results[result]), logObject)
     return results
 
 
@@ -562,7 +559,7 @@ def topKSimilaritiesAnalogy(model, word1, word2, word3, wordMapping, vocabulary,
                                           [word1.lower(), word2.lower(), word3.lower()], K, unknownToken)
     writeLog("Most similar words to complete the analogy {0}:{1}::{2}:___".format(word1, word2, word3), logObject)
     for result in results:
-        writeLog("{0} (score = {1})".format(result, str(results[result])), logObject)
+        writeLog("{0} (score = {1})".format(result, results[result]), logObject)
     return results
 
 
@@ -592,17 +589,16 @@ def finalEvaluation(model, testDl, logObject, distribution=None, lossFunction=nn
             numBatchesProcessed += 1
             if numBatchesProcessed % args.batchesForLogging == 0:
                 writeLog(
-                    "Processed {0} batches out of {1} (testing)".format(str(numBatchesProcessed), str(len(testDl))),
-                    logObject)
+                    "Processed {0} batches out of {1} (testing)".format(numBatchesProcessed, len(testDl)), logObject)
         loss = loss / len(testDl)
-    writeLog("Test loss: {0}".format(str(loss)), logObject)
+    writeLog("Test loss: {0}".format(loss), logObject)
     seconds = (datetime.now() - now).total_seconds()
-    writeLog("Took: {0} seconds to compute test loss".format(str(seconds)), logObject)
+    writeLog("Took: {0} seconds to compute test loss".format(seconds), logObject)
     return loss
 
 
 def writeLog(message, logObject, timestamp=datetime.now()):
-    logObject.info("[{0}]: {1}".format(str(timestamp), message))
+    logObject.info("[{0}]: {1}".format(timestamp, message))
     return
 
 
