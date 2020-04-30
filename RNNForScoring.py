@@ -19,19 +19,18 @@ CONTEXT_SIZE = 3
 EMBEDDING_DIM = 16
 TRAIN_PROPORTION = 0.75
 VALID_PROPORTION = 0.15
-LEARNING_RATE = 1
+LEARNING_RATE = 0.005
 MOMENTUM = 0.9
 BATCH_SIZE = 1000
-BATCHES_FOR_LOGGING = 1000
-EPOCHS = 20
-LEARNING_RATE_DECAY_FACTOR = 0.1
-PATIENCE = 1
+EPOCHS = 200
+LEARNING_RATE_DECAY_FACTOR = 0.5
+PATIENCE = 5
 UNIGRAM_DISTRIBUTION_POWER = 0.75
 UNKNOWN_TOKEN = '???'
-HIDDEN_STATE_CLAMP = 5
-EXPLOSION_DETECTION_FACTOR = 3.
+HIDDEN_STATE_CLAMP = 10
+EXPLOSION_DETECTION_FACTOR = 3
 MAX_EXPLOSIONS = 2
-NUM_HIDDEN_STATES = 10
+NUM_HIDDEN_STATES = 100
 NUM_CATEGORIES = 2
 
 REVIEW_FILE = 'reviews_Grocery_and_Gourmet_Food_5.json.gz'
@@ -268,7 +267,7 @@ def trainRNN(modelName, epochs, trainData, validData, algorithm, wordMapping, vo
         writeLog("Running epoch {0}".format(epoch), logObject)
         rnnPreExplosion = rnn
         trainLoss = trainOnBatch(rnn, trainData, rnnOptimiser, wordMapping, vocabSize, batchSize, embeddingModel)
-        validLoss = validateOnBatch(rnn, validData, wordMapping, vocabSize, 2 * batchSize, embeddingModel)
+        validLoss = validateOnBatch(rnn, validData, wordMapping, vocabSize, batchSize, embeddingModel)
         seconds = (datetime.now() - now).total_seconds()
         writeLog("Epoch took: {0} seconds".format(str(seconds)), logObject)
         if epoch > 0:
