@@ -6,7 +6,7 @@ from json import loads
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import SGD
+from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 from datetime import datetime
 from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -23,7 +23,6 @@ MIN_WORD_COUNT = 10
 TRAIN_PROPORTION = 0.75
 VALID_PROPORTION = 0.15
 LEARNING_RATE = 1
-MOMENTUM = 0.9
 BATCH_SIZE = 1000
 BATCHES_FOR_LOGGING = 1000
 EPOCHS = 20
@@ -48,7 +47,6 @@ parser.add_argument("-tp", "--trainProportion", type=float, default=TRAIN_PROPOR
 parser.add_argument("-vp", "--validProportion", type=float, default=VALID_PROPORTION,
                     help="Proportion of reviews to use in validation set")
 parser.add_argument("-lr", "--learningRate", type=float, default=LEARNING_RATE, help="Initial learning rate to use")
-parser.add_argument("-m", "--momentum", type=float, default=MOMENTUM, help="Momentum to use in optimiser")
 parser.add_argument("-bs", "--batchSize", type=int, default=BATCH_SIZE,  help="Batch size for training")
 parser.add_argument("-bsfl", "--batchesForLogging", type=int, default=BATCHES_FOR_LOGGING,
                     help="After how many batches processed should the progress be logged")
@@ -106,7 +104,7 @@ MIN_REVIEW_LENGTH = 2 * args.contextSize + 1
 CUDA = torch.cuda.is_available()
 FULL_NAME = args.name + "CS" + str(args.contextSize) + "ED" + str(args.embeddingDimension) + "MWC" + \
             str(args.minWordCount) + "TP" + str(args.trainProportion) + "VP" + str(args.validProportion) + "LR" + \
-            str(args.learningRate) + "M" + str(args.momentum) + "BS" + str(args.batchSize) + "E" + str(args.epochs) + \
+            str(args.learningRate) + "BS" + str(args.batchSize) + "E" + str(args.epochs) + \
             "LRDF" + str(args.learningRateDecayFactor) + "P" + str(args.patience) + "SST" + \
             str(args.subsampleThreshold) + "UDP" + str(args.unigramDistributionPower) + "NNS" + \
             str(args.numNegativeSamples) + "IPC" + str(args.innerProductClamp) + args.algorithmType
@@ -339,7 +337,7 @@ class SkipGramWithNegativeSampling(nn.Module):
 
 def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, epochs=args.epochs,
           embeddingDim=args.embeddingDimension, contextSize=args.contextSize, innerProductClamp=args.innerProductClamp,
-          lr=args.learningRate, momentum=args.momentum, numNegativeSamples=args.numNegativeSamples,
+          lr=args.learningRate, numNegativeSamples=args.numNegativeSamples,
           learningRateDecayFactor=args.learningRateDecayFactor, patience=args.patience, algorithm=args.algorithmType):
     checkAlgorithmImplemented(algorithm, logObject)
     writeLog(
@@ -358,7 +356,7 @@ def train(modelName, trainDl, validDl, vocabSize, logObject, distribution=None, 
         model.cuda()
         if algorithm.upper() == 'SGNS':
             distributionTensor = distributionTensor.to('cuda')
-    optimizer = SGD(model.parameters(), lr=lr, momentum=momentum, nesterov=True)
+    optimizer = Adam(model.parameters(), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=learningRateDecayFactor, patience=patience,
                                   verbose=True)
 
