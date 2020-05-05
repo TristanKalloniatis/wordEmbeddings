@@ -595,7 +595,8 @@ def finalEvaluation(model, testDl, logObject, distribution=None, lossFunction=nn
     return loss
 
 
-def writeLog(message, logObject, timestamp=datetime.now()):
+def writeLog(message, logObject):
+    timestamp = datetime.now()
     logObject.info("[{0}]: {1}".format(timestamp, message))
     return
 
