@@ -186,29 +186,6 @@ def buildDataLoader(rawData, wordMapping, vocabSize, logObject, minReviewLength=
     return dl
 
 
-def buildDataLoaderTFIDF(rawData, wordMapping, vocabSize, frequencies, logObject, minReviewLength=MIN_REVIEW_LENGTH,
-                         batchSize=None, shuffle=False):
-    xs = []
-    ys = []
-    for review in rawData:
-        words = preProcess(review['reviewText']).split()
-        if len(words) < minReviewLength:
-            continue
-        xs.append(makeTFIDFVector(words, wordMapping, vocabSize, frequencies))
-        if review['overall'] == 5.0:
-            ys.append(1)
-        else:
-            ys.append(0)
-    writeLog("Size of data: {0}".format(len(xs)), logObject)
-    xs, ys = map(torch.tensor, (xs, ys))
-    ds = TensorDataset(xs, ys)
-    if batchSize is not None:
-        dl = DataLoader(ds, batch_size=batchSize, shuffle=shuffle)
-    else:
-        dl = DataLoader(ds, shuffle=shuffle)
-    return dl
-
-
 def buildDataLoaderEmbeddingModel(rawData, wordMapping, embeddingModel, logObject,
                                   minReviewLength=MIN_REVIEW_LENGTH, batchSize=None, shuffle=False):
     xs = []
@@ -236,14 +213,6 @@ def makeBOWVector(words, wordMapping, vocabSize):
     vector = [0.] * vocabSize
     for word in words:
         vector[wordMapping[word.lower()]] += 1 / len(words)
-    return vector
-
-
-def makeTFIDFVector(words, wordMapping, vocabSize, frequencies):
-    vector = [0.] * vocabSize
-    for word in words:
-        dfScore = max(frequencies[wordMapping[word.lower()]], DF_SCORE_THRESHOLD)
-        vector[wordMapping[word.lower()]] += 1 / dfScore
     return vector
 
 
@@ -340,28 +309,6 @@ def setup(filePath, logObject, batchSize=BATCH_SIZE, minWordCount=MIN_WORD_COUNT
     return wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, trainDl, validDl, testDl
 
 
-def setupTFIDF(filePath, logObject, batchSize=BATCH_SIZE, minWordCount=MIN_WORD_COUNT, unknownToken=UNKNOWN_TOKEN,
-               trainProportion=TRAIN_PROPORTION, validProportion=VALID_PROPORTION):
-    now = datetime.now()
-    data = getData(filePath, logObject)
-    wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies = buildVocab(data, minWordCount,
-                                                                                         unknownToken,
-                                                                                         logObject)
-    trainData, validData, testData = splitData(data, trainProportion, validProportion)
-    writeLog("Train data", logObject)
-    trainDl = buildDataLoaderTFIDF(trainData, wordMapping, vocabSize, frequencies, logObject, batchSize=batchSize,
-                                   shuffle=True)
-    writeLog("Validation data", logObject)
-    validDl = buildDataLoaderTFIDF(validData, wordMapping, vocabSize, frequencies, logObject, batchSize=2 * batchSize,
-                                   shuffle=False)
-    writeLog("Test data", logObject)
-    testDl = buildDataLoaderTFIDF(testData, wordMapping, vocabSize, frequencies, logObject, batchSize=2 * batchSize,
-                                 shuffle=False)
-    seconds = (datetime.now() - now).total_seconds()
-    writeLog("Setting up took: {0} seconds".format(seconds), logObject)
-    return wordMapping, reverseWordMapping, allowableVocab, vocabSize, frequencies, trainDl, validDl, testDl
-
-
 def train(modelName, trainDl, validDl, logObject, useEmbeds=False, epochs=EPOCHS, lr=LEARNING_RATE, momentum=MOMENTUM,
           learningRateDecayFactor=LEARNING_RATE_DECAY_FACTOR, patience=PATIENCE):
     trainLosses = []
@@ -440,10 +387,6 @@ writeLog("BOW", logger)
 wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDataLoaderBOW, validDataLoaderBOW, testDataLoaderBOW = setup(
     REVIEW_FILE, logger)
 trainedModelBOW, trainLossesBOW, validLossesBOW = train(NAME + 'BOW', trainDataLoaderBOW, validDataLoaderBOW, logger)
-writeLog("TFIDF", logger)
-wordIndex, reverseWordIndex, vocab, VOCAB_SIZE, wordFrequencies, trainDataLoaderTFIDF, validDataLoaderTFIDF, testDataLoaderTFIDF = setupTFIDF(
-    REVIEW_FILE, logger)
-trainedModelTFIDF, trainLossesTFIDF, validLossesTFIDF = train(NAME + 'TFIDF', trainDataLoaderTFIDF, validDataLoaderTFIDF, logger)
 writeLog("CBOW", logger)
 wordIndex, reverseWordIndex, vocab, wordFrequencies, sampleDistribution, loadedModel = loadModelState(NAME, logger,
                                                                                                       algorithm=
